@@ -5,3 +5,8 @@ dist/
 *.zip
 ZoomtopiaPayload/Installers/*.pkg
 ZoomtopiaPayload/checksums.txt
+
+.superpowers/
+ZoomtopiaPayload/config/*.mobileconfig
+*.p12
+*.p8

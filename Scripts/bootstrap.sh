@@ -5,6 +5,8 @@ set -uo pipefail
 PAYLOAD_ROOT=""
 STATUS_FILE=""
 LOG_FILE="/var/log/zoomtopia-setup.log"
+RESOURCES=""
+MODE="full"
 TOTAL=11
 FAILURES=0
 WARNINGS=0
@@ -14,24 +16,30 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --payload) PAYLOAD_ROOT="$2"; shift 2 ;;
         --status) STATUS_FILE="$2"; shift 2 ;;
-        --log) LOG_FILE="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
+        --resources) RESOURCES="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 64 ;;
     esac
 done
+
+[[ "$MODE" == full || "$MODE" == limited ]] || exit 64
 
 if [[ $EUID -ne 0 ]]; then
     echo "This setup must run as root." >&2
     exit 77
 fi
 
-if [[ -z "$PAYLOAD_ROOT" || -z "$STATUS_FILE" ]]; then
-    echo "Usage: bootstrap.sh --payload PATH --status PATH [--log PATH]" >&2
+if [[ -z "$PAYLOAD_ROOT" || -z "$STATUS_FILE" || -z "$RESOURCES" ]]; then
+    echo "Usage: bootstrap.sh --payload PATH --status PATH --resources PATH" >&2
     exit 64
 fi
 
-mkdir -p "$(dirname "$LOG_FILE")"
-touch "$LOG_FILE"
-chmod 644 "$LOG_FILE"
+[[ ! -L "$LOG_FILE" ]] || exit 1
+touch "$LOG_FILE" || exit 1
+chmod 644 "$LOG_FILE" || exit 1
+VERIFIER="$RESOURCES/PayloadVerifier"
+export ZOOMTOPIA_VERIFIED_CATALOG="$PAYLOAD_ROOT/package-catalog.json"
+[[ -x "$VERIFIER" && -d "$PAYLOAD_ROOT/Installers" ]] || exit 1
 exec >> "$LOG_FILE" 2>&1
 
 echo ""
@@ -48,9 +56,10 @@ json_escape() {
 
 emit() {
     local index="$1" id="$2" title="$3" state="$4" detail="${5:-}"
-    printf '{"id":"%s","title":"%s","state":"%s","detail":"%s","index":%d,"total":%d}\n' \
-        "$(json_escape "$id")" "$(json_escape "$title")" "$state" "$(json_escape "$detail")" "$index" "$TOTAL" >> "$STATUS_FILE"
-    chmod 644 "$STATUS_FILE" 2>/dev/null || true
+    local event
+    event=$(printf '{"id":"%s","title":"%s","state":"%s","detail":"%s","index":%d,"total":%d}' \
+        "$(json_escape "$id")" "$(json_escape "$title")" "$state" "$(json_escape "$detail")" "$index" "$TOTAL")
+    "$VERIFIER" --event "$STATUS_FILE" "$event" || exit 1
     echo "[$index/$TOTAL] $title: $state${detail:+ — $detail}"
 }
 
@@ -88,143 +97,58 @@ user_home() {
 
 run_as_user() {
     local user="$1" uid
+    shift
     uid=$(/usr/bin/id -u "$user") || return 1
     /bin/launchctl asuser "$uid" /usr/bin/sudo -u "$user" "$@"
 }
 
-resolve_package() {
-    local base="$1" arch="$2" candidate
-    for candidate in \
-        "$PAYLOAD_ROOT/Installers/${base}-${arch}.pkg" \
-        "$PAYLOAD_ROOT/Installers/${base}.pkg"; do
-        if [[ -f "$candidate" ]]; then
-            printf '%s' "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
-install_package_if_changed() {
-    local package_path="$1" state_name="$2" app_path="$3"
-    local package_hash state_file
-    package_hash=$(/usr/bin/shasum -a 256 "$package_path" | /usr/bin/awk '{print $1}') || return 1
-    state_file="/var/db/com.zoom.zoomtopiasetup/${state_name}.sha256"
-    mkdir -p "$(dirname "$state_file")"
-
-    if [[ -d "$app_path" && -f "$state_file" && "$(cat "$state_file")" == "$package_hash" ]]; then
-        return 10
-    fi
-
-    if is_true "$(config_raw requireSignedPackages true)"; then
-        /usr/sbin/pkgutil --check-signature "$package_path" || return 1
-    fi
-    /usr/sbin/installer -pkg "$package_path" -target / || return 1
-    [[ -d "$app_path" ]] || return 1
-    printf '%s\n' "$package_hash" > "$state_file"
-    chmod 600 "$state_file"
-    return 0
-}
-
 CONFIG_FILE="$PAYLOAD_ROOT/config/setup-config.json"
-ARCH=$(/usr/bin/uname -m)
-case "$ARCH" in
-    arm64) PACKAGE_ARCH="arm64" ;;
-    x86_64) PACKAGE_ARCH="x86_64" ;;
-    *) PACKAGE_ARCH="$ARCH" ;;
-esac
-
-# 1. Validate
-emit 1 validate "Validate Mac" running "Checking architecture, user, and power"
 CURRENT_USER=$(console_user)
-if [[ "$ARCH" != "arm64" && "$ARCH" != "x86_64" ]]; then
-    fail_step 1 validate "Validate Mac" "Unsupported architecture: $ARCH"
-elif [[ "$CURRENT_USER" == "root" || "$CURRENT_USER" == "loginwindow" || -z "$CURRENT_USER" ]]; then
-    fail_step 1 validate "Validate Mac" "Log into the target user account before running setup"
-elif [[ ! -f "$CONFIG_FILE" ]]; then
-    fail_step 1 validate "Validate Mac" "Missing config/setup-config.json"
-elif is_true "$(config_raw requireACPower true)" && ! /usr/bin/pmset -g batt | /usr/bin/grep -q "AC Power"; then
-    fail_step 1 validate "Validate Mac" "Connect the Mac to AC power and run setup again"
-else
-    emit 1 validate "Validate Mac" passed "$ARCH; target user $CURRENT_USER"
-fi
-
-if [[ $FAILURES -gt 0 ]]; then
-    emit 2 payload "Verify USB payload" skipped "Blocked by validation failure"
-    emit 3 chrome "Install Google Chrome" skipped "Blocked by validation failure"
-    emit 4 zoom "Install Zoom Workplace" skipped "Blocked by validation failure"
-    emit 5 zoom-config "Configure Zoom Workplace" skipped "Blocked by validation failure"
-    emit 6 trackpad "Configure trackpad" skipped "Blocked by validation failure"
-    emit 7 wallpaper "Set Zoomtopia wallpaper" skipped "Blocked by validation failure"
-    emit 8 aliases "Create desktop icons" skipped "Blocked by validation failure"
-    emit 9 privacy "Stage Zoom privacy permissions" skipped "Blocked by validation failure"
-    emit 10 updates "Install macOS updates" skipped "Blocked by validation failure"
-    emit 11 verify "Final verification" failed "Preflight validation failed"
-    exit 1
-fi
-
-# 2. Verify payload checksums
-emit 2 payload "Verify USB payload" running "Checking package integrity"
-if [[ ! -f "$PAYLOAD_ROOT/checksums.txt" ]]; then
-    fail_step 2 payload "Verify USB payload" "Missing checksums.txt; run scripts/generate-checksums.sh"
-elif (cd "$PAYLOAD_ROOT" && /usr/bin/shasum -a 256 -c checksums.txt); then
-    emit 2 payload "Verify USB payload" passed "All listed files match"
-else
-    fail_step 2 payload "Verify USB payload" "One or more payload files failed checksum verification"
-fi
-
-if [[ $FAILURES -gt 0 ]]; then
-    emit 3 chrome "Install Google Chrome" skipped "Blocked by payload verification failure"
-    emit 4 zoom "Install Zoom Workplace" skipped "Blocked by payload verification failure"
-    emit 5 zoom-config "Configure Zoom Workplace" skipped "Blocked by payload verification failure"
-    emit 6 trackpad "Configure trackpad" skipped "Blocked by payload verification failure"
-    emit 7 wallpaper "Set Zoomtopia wallpaper" skipped "Blocked by payload verification failure"
-    emit 8 aliases "Create desktop icons" skipped "Blocked by payload verification failure"
-    emit 9 privacy "Stage Zoom privacy permissions" skipped "Blocked by payload verification failure"
-    emit 10 updates "Install macOS updates" skipped "Blocked by payload verification failure"
-    emit 11 verify "Final verification" failed "Payload integrity verification failed"
-    exit 1
-fi
-
-# 3. Chrome
-emit 3 chrome "Install Google Chrome" running "Selecting package for $PACKAGE_ARCH"
-CHROME_PACKAGE=$(resolve_package "GoogleChrome" "$PACKAGE_ARCH") || CHROME_PACKAGE=""
-if [[ -z "$CHROME_PACKAGE" ]]; then
-    fail_step 3 chrome "Install Google Chrome" "No GoogleChrome-${PACKAGE_ARCH}.pkg or GoogleChrome.pkg found"
-else
-    install_package_if_changed "$CHROME_PACKAGE" chrome "/Applications/Google Chrome.app"
-    result=$?
-    if [[ $result -eq 10 ]]; then
-        emit 3 chrome "Install Google Chrome" skipped "Already installed from this payload"
-    elif [[ $result -eq 0 ]]; then
-        version=$(/usr/bin/defaults read "/Applications/Google Chrome.app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || true)
-        emit 3 chrome "Install Google Chrome" passed "Installed${version:+ version $version}"
-    else
-        fail_step 3 chrome "Install Google Chrome" "Package installation failed"
-    fi
-fi
-
-# 4. Zoom
-emit 4 zoom "Install Zoom Workplace" running "Selecting package for $PACKAGE_ARCH"
-ZOOM_PACKAGE=$(resolve_package "ZoomWorkplace" "$PACKAGE_ARCH") || ZOOM_PACKAGE=""
 ZOOM_APP="/Applications/zoom.us.app"
 [[ -d "/Applications/Zoom Workplace.app" ]] && ZOOM_APP="/Applications/Zoom Workplace.app"
-if [[ -z "$ZOOM_PACKAGE" ]]; then
-    fail_step 4 zoom "Install Zoom Workplace" "No ZoomWorkplace-${PACKAGE_ARCH}.pkg or ZoomWorkplace.pkg found"
-else
-    install_package_if_changed "$ZOOM_PACKAGE" zoom "$ZOOM_APP"
-    result=$?
-    if [[ $result -eq 10 ]]; then
-        emit 4 zoom "Install Zoom Workplace" skipped "Already installed from this payload"
-    elif [[ $result -eq 0 ]]; then
-        [[ -d "/Applications/Zoom Workplace.app" ]] && ZOOM_APP="/Applications/Zoom Workplace.app"
-        version=$(/usr/bin/defaults read "$ZOOM_APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || true)
-        emit 4 zoom "Install Zoom Workplace" passed "Installed${version:+ version $version}"
-    else
-        fail_step 4 zoom "Install Zoom Workplace" "Package installation failed"
-    fi
-fi
 
+install_approved_package() {
+    local index="$1" id="$2" title="$3" filename="$4" decision package_path state_dir
+    emit "$index" "$id" "$title" running "Comparing installed version with the verified installer"
+    decision=$("$VERIFIER" --decision "$id") || {
+        fail_step "$index" "$id" "$title" "Existing app identity or version needs administrator review"
+        return
+    }
+    if [[ "$decision" == "skip" ]]; then
+        emit "$index" "$id" "$title" skipped "Current or newer signed version already installed"
+        return
+    fi
+    package_path="$PAYLOAD_ROOT/Installers/$filename"
+    if [[ ! -f "$package_path" ]] || ! "$VERIFIER" --verify-package "$id" "$package_path"; then
+        fail_step "$index" "$id" "$title" "Approved package unavailable or invalid; rerun preparation"
+        return
+    fi
+    if ! /usr/sbin/installer -pkg "$package_path" -target /; then
+        fail_step "$index" "$id" "$title" "Package installation failed; see the log"
+        return
+    fi
+    decision=$("$VERIFIER" --decision "$id") || decision="invalid"
+    if [[ "$decision" != "skip" ]]; then
+        fail_step "$index" "$id" "$title" "Installed application did not pass identity, version, and architecture checks"
+        return
+    fi
+    state_dir="/var/db/com.zoom.zoomtopiasetup"
+    if [[ -L "$state_dir" ]] || ! mkdir -p "$state_dir" || ! chmod 700 "$state_dir"; then
+        fail_step "$index" "$id" "$title" "Cannot record installation state"
+    elif [[ -L "$state_dir/$id.sha256" ]] || ! /usr/bin/shasum -a 256 "$package_path" | /usr/bin/awk '{print $1}' > "$state_dir/$id.sha256"; then
+        fail_step "$index" "$id" "$title" "Cannot record installation hash"
+    else
+        chmod 600 "$state_dir/$id.sha256"
+        emit "$index" "$id" "$title" passed "Approved version installed and verified"
+    fi
+}
+
+# The signed helper has already emitted preflight and payload terminal events.
+install_approved_package 3 chrome "Install Google Chrome" GoogleChrome.pkg
+install_approved_package 4 zoom "Install Zoom Workplace" ZoomWorkplace.pkg
+[[ -d "/Applications/Zoom Workplace.app" ]] && ZOOM_APP="/Applications/Zoom Workplace.app"
+
+if [[ "$MODE" == full ]]; then
 # 5. Zoom managed configuration
 emit 5 zoom-config "Configure Zoom Workplace" running "Applying managed preferences"
 ZOOM_CONFIG_NAME=$(config_raw zoomConfigurationFilename us.zoom.config.plist)
@@ -232,8 +156,11 @@ ZOOM_CONFIG="$PAYLOAD_ROOT/config/$ZOOM_CONFIG_NAME"
 if [[ ! -f "$ZOOM_CONFIG" ]]; then
     emit 5 zoom-config "Configure Zoom Workplace" skipped "No Zoom configuration plist supplied"
 elif /usr/bin/plutil -lint "$ZOOM_CONFIG" >/dev/null; then
-    /usr/bin/install -o root -g wheel -m 644 "$ZOOM_CONFIG" /Library/Preferences/us.zoom.config.plist
-    emit 5 zoom-config "Configure Zoom Workplace" passed "Installed /Library/Preferences/us.zoom.config.plist"
+    if [[ ! -L /Library/Preferences/us.zoom.config.plist ]] && /usr/bin/install -o root -g wheel -m 644 "$ZOOM_CONFIG" /Library/Preferences/us.zoom.config.plist; then
+        emit 5 zoom-config "Configure Zoom Workplace" passed "Installed /Library/Preferences/us.zoom.config.plist"
+    else
+        fail_step 5 zoom-config "Configure Zoom Workplace" "Could not install managed preferences"
+    fi
 else
     fail_step 5 zoom-config "Configure Zoom Workplace" "The Zoom configuration plist is invalid"
 fi
@@ -265,12 +192,10 @@ WALLPAPER_TARGET="/Library/Desktop Pictures/Zoomtopia-${WALLPAPER_NAME}"
 if [[ ! -f "$WALLPAPER_SOURCE" ]]; then
     fail_step 7 wallpaper "Set Zoomtopia wallpaper" "Missing assets/$WALLPAPER_NAME"
 else
-    /usr/bin/install -o root -g wheel -m 644 "$WALLPAPER_SOURCE" "$WALLPAPER_TARGET"
-    wallpaper_script="tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER_TARGET\""
-    if run_as_user "$CURRENT_USER" /usr/bin/osascript -e "$wallpaper_script"; then
-        emit 7 wallpaper "Set Zoomtopia wallpaper" passed "Applied to all desktops"
+    if [[ -L "$WALLPAPER_TARGET" ]] || ! /bin/mkdir -p "/Library/Desktop Pictures" || ! /usr/bin/install -o root -g wheel -m 644 "$WALLPAPER_SOURCE" "$WALLPAPER_TARGET"; then
+        fail_step 7 wallpaper "Set Zoomtopia wallpaper" "Could not install wallpaper"
     else
-        warn_step 7 wallpaper "Set Zoomtopia wallpaper" "Image installed, but macOS requires wallpaper approval"
+        emit 7 wallpaper "Set Zoomtopia wallpaper" actionRequired "Image installed; the setup app will apply it to this user's displays"
     fi
 fi
 
@@ -278,7 +203,7 @@ fi
 emit 8 aliases "Create desktop icons" running "Adding Chrome and Zoom to the Desktop"
 DESKTOP="$(user_home "$CURRENT_USER")/Desktop"
 alias_errors=0
-mkdir -p "$DESKTOP"
+run_as_user "$CURRENT_USER" /bin/mkdir -p "$DESKTOP" || alias_errors=$((alias_errors + 1))
 for spec in "Google Chrome:/Applications/Google Chrome.app" "Zoom Workplace:$ZOOM_APP"; do
     name="${spec%%:*}"
     target="${spec#*:}"
@@ -290,9 +215,8 @@ for spec in "Google Chrome:/Applications/Google Chrome.app" "Zoom Workplace:$ZOO
         alias_errors=$((alias_errors + 1))
         continue
     fi
-    /bin/ln -s "$target" "$link" || alias_errors=$((alias_errors + 1))
+    run_as_user "$CURRENT_USER" /bin/ln -s "$target" "$link" || alias_errors=$((alias_errors + 1))
 done
-/usr/sbin/chown -h "$CURRENT_USER":staff "$DESKTOP/Google Chrome" "$DESKTOP/Zoom Workplace" 2>/dev/null || true
 if [[ $alias_errors -eq 0 ]]; then
     emit 8 aliases "Create desktop icons" passed "Chrome and Zoom icons are ready"
 else
@@ -304,43 +228,60 @@ emit 9 privacy "Stage Zoom privacy permissions" running "Preparing the user-appr
 PRIVACY_PROFILE_NAME=$(config_raw privacyProfileFilename ZoomPrivacy.mobileconfig)
 PRIVACY_PROFILE="$PAYLOAD_ROOT/config/$PRIVACY_PROFILE_NAME"
 if [[ ! -f "$PRIVACY_PROFILE" ]]; then
-    warn_step 9 privacy "Stage Zoom privacy permissions" "No privacy profile supplied; approve Camera, Microphone, and Screen Recording manually"
-    ACTION_REQUIRED=1
+    emit 9 privacy "Stage Zoom privacy permissions" actionRequired "Approve Camera, Microphone, and Screen Recording manually"
 else
     PROFILE_DEST="$DESKTOP/$PRIVACY_PROFILE_NAME"
-    /usr/bin/install -o "$CURRENT_USER" -g staff -m 644 "$PRIVACY_PROFILE" "$PROFILE_DEST"
-    run_as_user "$CURRENT_USER" /usr/bin/open "$PROFILE_DEST" || true
-    emit 9 privacy "Stage Zoom privacy permissions" actionRequired "Install the opened profile, then approve Zoom in Privacy & Security"
+    # Copy as the operator with noclobber. Never replace unrelated Desktop content.
+    if [[ -e "$PROFILE_DEST" || -L "$PROFILE_DEST" ]]; then
+        if [[ -L "$PROFILE_DEST" ]] || ! /usr/bin/cmp -s "$PRIVACY_PROFILE" "$PROFILE_DEST"; then
+            warn_step 9 privacy "Stage Zoom privacy permissions" "Existing Desktop profile preserved; remove the collision and rerun"
+        else
+            run_as_user "$CURRENT_USER" /usr/bin/open "$PROFILE_DEST" || true
+            emit 9 privacy "Stage Zoom privacy permissions" actionRequired "Approve the profile and Zoom privacy permissions"
+        fi
+    else
+        # Root staging is private; expose only a temporary operator-owned copy for transfer.
+        PROFILE_TEMP=$(/usr/bin/mktemp "/private/tmp/zoomtopia-profile.XXXXXX")
+        if [[ -n "$PROFILE_TEMP" ]] && /usr/bin/install -o "$CURRENT_USER" -g staff -m 600 "$PRIVACY_PROFILE" "$PROFILE_TEMP" && run_as_user "$CURRENT_USER" /bin/bash -c 'set -C; cat "$1" > "$2"' _ "$PROFILE_TEMP" "$PROFILE_DEST"; then
+            run_as_user "$CURRENT_USER" /usr/bin/open "$PROFILE_DEST" || true
+            emit 9 privacy "Stage Zoom privacy permissions" actionRequired "Approve the profile and Zoom privacy permissions"
+        else
+            fail_step 9 privacy "Stage Zoom privacy permissions" "Could not stage privacy profile"
+        fi
+        [[ -z "$PROFILE_TEMP" ]] || /bin/rm -f "$PROFILE_TEMP"
+    fi
+fi
+ACTION_REQUIRED=1
+
+else
+    emit 5 zoom-config "Configure Zoom Workplace" skipped "Excluded from limited test"
+    emit 6 trackpad "Configure trackpad" skipped "Excluded from limited test"
+    emit 7 wallpaper "Set Zoomtopia wallpaper" skipped "Excluded from limited test"
+    emit 8 aliases "Create desktop icons" skipped "Excluded from limited test"
+    emit 9 privacy "Stage Zoom privacy permissions" actionRequired "Optional guided Zoom tests; limited mode cannot mark this Mac ready"
     ACTION_REQUIRED=1
 fi
 
 # 10. macOS updates
-emit 10 updates "Install macOS updates" running "Checking Apple Software Update"
-if ! is_true "$(config_raw installOSUpdates true)"; then
-    emit 10 updates "Install macOS updates" skipped "Disabled in configuration"
-elif /usr/sbin/softwareupdate --install --all --verbose; then
-    if [[ -f /var/run/reboot-required ]]; then
-        emit 10 updates "Install macOS updates" warning "Updates installed; restart required"
-        WARNINGS=$((WARNINGS + 1))
-    else
-        emit 10 updates "Install macOS updates" passed "All available updates processed"
-    fi
+emit 10 updates "Check macOS updates" running "Checking Apple Software Update"
+if [[ "$MODE" == limited ]] || ! is_true "$(config_raw installOSUpdates true)"; then
+    emit 10 updates "Check macOS updates" skipped "Excluded by run mode or configuration"
 else
-    warn_step 10 updates "Install macOS updates" "Some updates need a volume-owner password or restart; see the log"
+    source "$RESOURCES/update-policy.sh"
+    install_macos_updates /var/db/com.zoom.zoomtopiasetup
 fi
 
 # 11. Verification
 emit 11 verify "Final verification" running "Checking installed applications and configuration"
 verification_errors=0
-[[ -d "/Applications/Google Chrome.app" ]] || verification_errors=$((verification_errors + 1))
-[[ -d "$ZOOM_APP" ]] || verification_errors=$((verification_errors + 1))
-[[ -f "$WALLPAPER_TARGET" ]] || verification_errors=$((verification_errors + 1))
+"$VERIFIER" --verify-apps || verification_errors=$((verification_errors + 1))
+if [[ "$MODE" == full && ! -f "${WALLPAPER_TARGET:-}" ]]; then verification_errors=$((verification_errors + 1)); fi
 if [[ $verification_errors -gt 0 || $FAILURES -gt 0 ]]; then
     fail_step 11 verify "Final verification" "$FAILURES setup step(s) failed; $verification_errors required item(s) missing"
+elif [[ $WARNINGS -gt 0 ]]; then
+    emit 11 verify "Final verification" warning "Resolve $WARNINGS warning(s), including any restart, and rerun before marking ready"
 elif [[ $ACTION_REQUIRED -gt 0 ]]; then
     emit 11 verify "Final verification" actionRequired "Automated setup passed; complete Zoom privacy approval"
-elif [[ $WARNINGS -gt 0 ]]; then
-    emit 11 verify "Final verification" warning "Setup passed with $WARNINGS warning(s)"
 else
     emit 11 verify "Final verification" passed "Mac is ready for Zoomtopia"
 fi

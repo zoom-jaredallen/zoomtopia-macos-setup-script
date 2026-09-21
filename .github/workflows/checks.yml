@@ -1,0 +1,21 @@
+name: Validate app
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and validate shell syntax
+        run: |
+          bash -n Scripts/*.sh Tests/bootstrap-test.sh
+          ./Scripts/test.sh
+      - name: Build universal app
+        run: ./Scripts/build-app.sh
+      - name: Verify bundle
+        run: |
+          lipo "dist/Zoomtopia Setup.app/Contents/MacOS/Zoomtopia Setup" -verify_arch x86_64 arm64
+          lipo "dist/Zoomtopia Setup.app/Contents/Resources/PayloadVerifier" -verify_arch x86_64 arm64
+          codesign --verify --deep --strict "dist/Zoomtopia Setup.app"
+          plutil -lint "dist/Zoomtopia Setup.app/Contents/Info.plist"

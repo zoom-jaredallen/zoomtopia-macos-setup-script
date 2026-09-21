@@ -1,7 +1,11 @@
 import SwiftUI
+#if canImport(SetupCore)
+import SetupCore
+#endif
 
 struct ContentView: View {
     @StateObject private var controller = SetupController()
+    @State private var confirmingRestartRequest = false
 
     var body: some View {
         Group {
@@ -18,7 +22,14 @@ struct ContentView: View {
         .foregroundStyle(ZoomtopiaTheme.primaryText)
         .tint(ZoomtopiaTheme.actionBlue)
         .preferredColorScheme(.dark)
-        .alert("Setup could not start", isPresented: $controller.showingError) {
+        .sheet(isPresented: $controller.showingPreflight) { preflightView }
+        .confirmationDialog("Has macOS explicitly asked you to restart?", isPresented: $confirmingRestartRequest) {
+            Button("Yes — remember restart required") { controller.recordRestartRequest(); controller.openSoftwareUpdate() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Use this only when Software Update shows a restart request. Available updates alone do not mean a restart is pending. Save your work and use Apple's restart control.")
+        }
+        .alert("Setup needs attention", isPresented: $controller.showingError) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(controller.errorMessage)
@@ -31,6 +42,7 @@ struct ContentView: View {
             BrandedDivider()
             ScrollView {
                 VStack(spacing: 12) {
+                    if controller.isComplete || controller.needsRevalidation { recoveryView }
                     ForEach(controller.steps) { step in
                         StepRow(step: step)
                     }
@@ -46,30 +58,90 @@ struct ContentView: View {
         BrandedHeader(
             title: "Technical Connect · Mac Setup",
             subtitle: controller.summary,
-            progress: controller.isRunning ? controller.progress : nil
+            progress: controller.isPreparing ? controller.downloadProgress : controller.isRunning ? controller.progress : nil
         )
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Button("Show Payload") { controller.revealPayload() }
+            Button("Offline Payload…") { controller.chooseOfflinePayload() }
+                .disabled(controller.isBusy)
+            if controller.offlinePayloadURL != nil {
+                Button("Use Online Downloads") { controller.offlinePayloadURL = nil }
+                    .disabled(controller.isBusy)
+            }
+            if controller.isPreparing {
+                Button("Cancel Download") { controller.cancelPreparation() }
+            }
             Button("Open Log") { controller.openLog() }
                 .disabled(!controller.logExists)
-            if controller.hasActionRequired {
+            if controller.canOpenPermissions {
                 Button("Permission Assistant") { controller.showPermissionAssistant() }
-                    .disabled(!controller.isComplete)
+                    .disabled(controller.isBusy)
             }
             Spacer()
             Button(controller.isComplete ? "Run Again" : "Start Setup") {
-                controller.start()
+                controller.requestStart()
             }
             .buttonStyle(.borderedProminent)
             .tint(ZoomtopiaTheme.actionBlue)
             .controlSize(.large)
-            .disabled(controller.isRunning)
+            .disabled(controller.isBusy)
         }
         .padding(20)
         .background(ZoomtopiaTheme.footer)
+    }
+
+    private var preflightView: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Review this setup run").font(.title2.bold())
+            Picker("Run mode", selection: $controller.pendingMode) {
+                Text("Full lab setup").tag(SetupMode.full)
+                Text("Limited application test").tag(SetupMode.limited)
+            }.pickerStyle(.segmented)
+            Text(controller.preflightDetail).fixedSize(horizontal: false, vertical: true)
+            Text("Connect AC power and allow at least 8 GB free. Online preparation downloads both signed installers to establish current versions. No reboot occurs automatically.")
+                .foregroundStyle(.secondary)
+            if controller.pendingMode == .full {
+                Button("Check update availability") { controller.checkUpdates() }
+                    .disabled(controller.isBusy)
+                if let update = controller.steps.first(where: { $0.id == "updates" }), !update.detail.isEmpty {
+                    Text(update.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack {
+                Button("Cancel") { controller.showingPreflight = false }
+                Spacer()
+                Button("Begin reviewed setup") { controller.start() }
+                    .buttonStyle(.borderedProminent).disabled(controller.isBusy)
+            }
+        }.padding(28).frame(width: 590)
+    }
+
+    private var recoveryView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(controller.mode == .limited ? "Limited test results" : "Complete remaining setup items").font(.headline)
+            if controller.needsRevalidation {
+                Text("Saved results are a summary only. Run setup to verify this Mac again before marking it ready.")
+            }
+            if controller.mode == .limited {
+                Text("System preferences and OS updates were excluded. Run full lab setup when this Mac is ready for provisioning.")
+            } else {
+                Text("Use Software Update to authorize current-major updates and restart when macOS asks. Avoid selecting the next major OS upgrade.")
+                HStack {
+                    Button("Authorize Update / Restart…") { controller.openSoftwareUpdate() }
+                    Button("Recheck Updates") { controller.checkUpdates() }
+                    Button("macOS requested a restart…") { confirmingRestartRequest = true }
+                }
+                HStack {
+                    Button("Retry Wallpaper") { controller.retryWallpaper() }
+                    if controller.isCheckingUpdates { ProgressView().controlSize(.small) }
+                }
+            }
+        }
+        .disabled(controller.isBusy)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16).background(ZoomtopiaTheme.raisedSurface, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var readyView: some View {
@@ -134,7 +206,7 @@ private struct StepRow: View {
     @ViewBuilder
     private var statusIcon: some View {
         switch step.state {
-        case .pending:
+        case .pending, .notRun:
             Image(systemName: "circle").foregroundStyle(Color.white.opacity(0.28))
         case .running:
             ProgressView().controlSize(.small)
@@ -165,18 +237,18 @@ private struct PermissionAssistantView: View {
                     PermissionCard(
                         id: "camera",
                         title: "Camera",
-                        detail: "Start the Zoom test meeting, turn video on, and choose Allow when macOS asks for camera access.",
+                        detail: "Open Zoom, click the settings cog, then Video & effects to preview the camera. Choose Allow if macOS asks. If settings are unavailable while signed out, use the test meeting. If access was denied earlier, enable it in Camera Settings.",
                         icon: "video.fill",
                         confirmed: binding(for: "camera"),
-                        primaryTitle: "Start Zoom Test",
-                        primaryAction: controller.openZoomTest,
+                        primaryTitle: "Open Zoom",
+                        primaryAction: controller.launchZoom,
                         secondaryTitle: "Open Camera Settings",
                         secondaryAction: controller.openCameraSettings
                     )
                     PermissionCard(
                         id: "microphone",
                         title: "Microphone",
-                        detail: "In the Zoom test meeting, join computer audio and choose Allow when macOS asks for microphone access.",
+                        detail: "In Zoom settings, select Audio and Test microphone. Choose Allow if prompted; speak, then confirm you hear the recording. If access was denied earlier, enable it in Microphone Settings. A test meeting is also available.",
                         icon: "mic.fill",
                         confirmed: binding(for: "microphone"),
                         primaryTitle: "Open Zoom",
@@ -188,7 +260,7 @@ private struct PermissionAssistantView: View {
                     PermissionCard(
                         id: "audio-test",
                         title: "Speakers and audio output",
-                        detail: "Speakers do not require a macOS privacy grant. Use Zoom’s speaker test and confirm that sound is audible.",
+                        detail: "In Zoom settings → Audio, select Test speaker and confirm the tone is audible on the intended output. Speakers do not require a macOS privacy grant.",
                         icon: "speaker.wave.3.fill",
                         confirmed: binding(for: "audio-test"),
                         primaryTitle: "Run Zoom Test",
@@ -223,12 +295,15 @@ private struct PermissionAssistantView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Complete each test in Zoom Workplace")
                     .font(.headline)
-                Text("These checkboxes are operator confirmations. macOS does not let this setup app silently grant or inspect another app’s private permissions.")
+                Text("Use the settings cog → Video & effects, then Audio. These checkboxes are operator confirmations. macOS does not let this setup app silently grant or inspect another app’s private permissions.")
                     .font(.subheadline)
                     .foregroundStyle(ZoomtopiaTheme.secondaryText)
             }
             Spacer()
-            Button("Open Zoom") { controller.launchZoom() }
+            VStack(spacing: 8) {
+                Button("Open Zoom") { controller.launchZoom() }
+                Button("Start Test Meeting") { controller.openZoomTest() }
+            }
                 .buttonStyle(.borderedProminent)
                 .tint(ZoomtopiaTheme.actionBlue)
         }
@@ -247,7 +322,7 @@ private struct PermissionAssistantView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Screen & System Audio Recording")
                         .font(.headline)
-                    Text("Open Screen Recording settings. If Zoom is not listed, drag the Zoom tile below into the application list, enable it, then restart Zoom.")
+                    Text("Start sharing your screen in a test meeting to request access. If needed, open Screen Recording settings, add Zoom using the tile below, and enable it. Restart Zoom after leaving any active meeting, then verify a screen share works.")
                         .font(.subheadline)
                         .foregroundStyle(ZoomtopiaTheme.secondaryText)
                 }
@@ -278,7 +353,7 @@ private struct PermissionAssistantView: View {
         HStack {
             Button("Back to Setup Summary") { controller.returnToSetupSummary() }
             Spacer()
-            Text(controller.allPermissionStepsConfirmed ? "All Zoom checks confirmed" : "Complete all four checks")
+            Text(controller.permissionFooterDetail)
                 .font(.subheadline)
                 .foregroundStyle(ZoomtopiaTheme.secondaryText)
             Button("Mark Mac Ready") { controller.finishPermissionAssistant() }

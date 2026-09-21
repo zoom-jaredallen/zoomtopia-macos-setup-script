@@ -1,7 +1,7 @@
 # Web distribution and online installer acquisition
 
 Date: 2026-09-21
-Status: proposed scope; application changes are not implemented.
+Status: implementation underway on `feat/web-distribution`; see README for implemented behavior and outstanding release qualification.
 
 ## Outcome
 
