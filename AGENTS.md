@@ -6,7 +6,7 @@ This repository builds a one-click macOS provisioning app for approximately 220 
 
 Optimize for a staging operator preparing many Macs in parallel: one administrator authorization, visible progress, safe reruns, clear failures, and an explicit final readiness check.
 
-Read [README.md](README.md) when changing payload preparation, Developer ID signing, notarization, or the operator workflow.
+Keep [README.md](README.md) focused on downloading, running, troubleshooting and customization for operators. Read [CONTRIBUTING.md](CONTRIBUTING.md) for payload preparation, architecture details, tests, Developer ID signing and notarization. Update both when behavior affects both audiences.
 
 ## Architecture
 
@@ -27,9 +27,9 @@ Key components:
 - `Scripts/update-policy.sh`: read-only current-major update classification and visible handoff to Apple Software Update.
 - `ZoomtopiaPayload/`: build-time wallpaper/configuration/profile inputs and optional offline packages.
 - `AppResources/package-catalog.json`: offline package bytes, minimum online versions, current vendor sources, and trusted vendor identities.
-- `scripts/build-app.sh`: creates a self-contained universal Intel/Apple Silicon app and verifier in `dist/`.
-- `scripts/generate-checksums.sh`: regenerates the external payload manifest.
-- `scripts/notarize-app.sh`: submits and staples the Developer ID build.
+- `Scripts/build-app.sh`: creates a self-contained universal Intel/Apple Silicon app and verifier in `dist/`.
+- `Scripts/generate-checksums.sh`: regenerates the external payload manifest.
+- `Scripts/notarize-app.sh`: submits and staples the Developer ID build.
 
 `dist/` and `.build/` are generated outputs. Make source changes elsewhere, then rebuild.
 
@@ -60,7 +60,7 @@ Run the non-destructive checks after every relevant change:
 ```bash
 ./Scripts/test.sh
 bash -n Scripts/*.sh Tests/*.sh
-./scripts/build-app.sh
+./Scripts/build-app.sh
 file "dist/Zoomtopia Setup.app/Contents/MacOS/Zoomtopia Setup"
 lipo -archs "dist/Zoomtopia Setup.app/Contents/MacOS/Zoomtopia Setup"
 codesign --verify --deep --strict --verbose=2 "dist/Zoomtopia Setup.app"
@@ -85,6 +85,15 @@ Run the real **Start Setup** flow only on an authorized staging/test Mac. Full m
 
 - The repository contains the event wallpapers and build-time configuration, but no vendor installers. Online mode downloads current vendor packages and authenticates signed version metadata; offline mode accepts only packages matching the bundled catalog. Root derives its per-run catalog from authenticated private package copies.
 - The final downloadable ZIP must be created after stapling and pass `Scripts/package-release.sh`.
-- Development builds are ad-hoc signed. Distribution requires the user's Developer ID Application identity and notarization credentials described in the README.
+- Development builds are ad-hoc signed. Distribution requires the user's Developer ID Application identity and notarization credentials described in CONTRIBUTING.md.
 - A local `.mobileconfig` may still require user approval and cannot provide the guarantees of supervised MDM. Keep the guided permission flow functional when no profile is present.
 - macOS updates may require a volume-owner password or restart. Use the visible Software Update handoff; do not collect credentials or install the OS unattended. Record a restart checkpoint only when the operator confirms that macOS requested one, then require a new boot and clean update check. Never infer pending restart from an available update label. Never force a reboot.
+
+## Documentation and release handoff
+
+- Keep README, the pinned download links in `docs/site/index.html`, release notes and version-specific validation records consistent. Put contributor commands in CONTRIBUTING.md.
+- Publish the exact signed/stapled ZIP that was checked. Documentation-only edits do not require rebuilding it; preserve the release tag's source commit for that binary.
+- Report browser-download/launch evidence separately from full provisioning and actual Zoom tests. Never mark incomplete tests as passed or imply notarization proves fleet readiness.
+- When multiple app copies exist, verify the running executable path and signing identity before attributing a live test. Name-based UI lookup may launch an older development copy. Translocated app attachment can fail; use an operator handoff instead of silently testing another copy.
+- Preserve browser quarantine during release testing. An automated browser failure is not proof of corporate policy blocking when the operator can download normally.
+- Documentation-only changes need link/content checks, not a new app build. Avoid overwriting a signed release artifact with an ad-hoc development build.
