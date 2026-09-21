@@ -18,7 +18,7 @@ struct ContentView: View {
         .foregroundStyle(ZoomtopiaTheme.primaryText)
         .tint(ZoomtopiaTheme.actionBlue)
         .preferredColorScheme(.dark)
-        .alert("Setup could not start", isPresented: $controller.showingError) {
+        .alert("Setup needs attention", isPresented: $controller.showingError) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(controller.errorMessage)
@@ -46,16 +46,24 @@ struct ContentView: View {
         BrandedHeader(
             title: "Technical Connect · Mac Setup",
             subtitle: controller.summary,
-            progress: controller.isRunning ? controller.progress : nil
+            progress: controller.isPreparing ? controller.downloadProgress : controller.isRunning ? controller.progress : nil
         )
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Button("Show Payload") { controller.revealPayload() }
+            Button("Offline Payload…") { controller.chooseOfflinePayload() }
+                .disabled(controller.isRunning)
+            if controller.offlinePayloadURL != nil {
+                Button("Use Online Downloads") { controller.offlinePayloadURL = nil }
+                    .disabled(controller.isRunning)
+            }
+            if controller.isPreparing {
+                Button("Cancel Download") { controller.cancelPreparation() }
+            }
             Button("Open Log") { controller.openLog() }
                 .disabled(!controller.logExists)
-            if controller.hasActionRequired {
+            if controller.hasActionRequired && controller.provisioningPassed {
                 Button("Permission Assistant") { controller.showPermissionAssistant() }
                     .disabled(!controller.isComplete)
             }

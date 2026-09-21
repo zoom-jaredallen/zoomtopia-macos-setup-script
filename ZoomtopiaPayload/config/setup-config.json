@@ -1,7 +1,6 @@
 {
   "schemaVersion": 1,
   "requireACPower": true,
-  "requireSignedPackages": true,
   "configureTrackpad": true,
   "installOSUpdates": true,
   "wallpaperFilename": "wallpaper.jpg",

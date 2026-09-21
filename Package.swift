@@ -8,8 +8,12 @@ let package = Package(
         .executable(name: "ZoomtopiaSetupApp", targets: ["ZoomtopiaSetupApp"])
     ],
     targets: [
+        .target(name: "SetupCore"),
+        .testTarget(name: "SetupCoreTests", dependencies: ["SetupCore"]),
+        .executableTarget(name: "PayloadVerifier", dependencies: ["SetupCore"]),
         .executableTarget(
             name: "ZoomtopiaSetupApp",
+            dependencies: ["SetupCore"],
             path: "Sources/ZoomtopiaSetupApp"
         )
     ]

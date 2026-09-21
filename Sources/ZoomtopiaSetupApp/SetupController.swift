@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+#if canImport(SetupCore)
+import SetupCore
+#endif
 
 enum StepState: String, Codable {
     case pending, running, passed, skipped, warning, failed, actionRequired
@@ -36,6 +39,12 @@ private struct CommandResult {
 final class SetupController: ObservableObject {
     @Published var steps: [SetupStep] = SetupController.initialSteps
     @Published var isRunning = false
+    @Published var isPreparing = false
+    @Published var preparationDetail = ""
+    @Published var downloadProgress = 0.0
+    @Published var offlinePayloadURL: URL?
+    private var setupTask: Task<Void, Never>?
+    private var provisioningExitCode: Int32?
     @Published var isComplete = false
     @Published var showingError = false
     @Published var errorMessage = ""
@@ -51,10 +60,15 @@ final class SetupController: ObservableObject {
     init() {
         if ProcessInfo.processInfo.environment["ZOOMTOPIA_READY_PREVIEW"] == "1"
             || ProcessInfo.processInfo.arguments.contains("--ready-preview") {
+            steps = Self.initialSteps.map { SetupStep(id: $0.id, title: $0.title, state: .passed, detail: "Preview only") }
+            provisioningExitCode = 0
+            confirmedPermissionIDs = Readiness.requiredChecks
             phase = .ready
             isComplete = true
         } else if ProcessInfo.processInfo.environment["ZOOMTOPIA_PERMISSION_PREVIEW"] == "1"
             || ProcessInfo.processInfo.arguments.contains("--permission-preview") {
+            steps = Self.initialSteps.map { SetupStep(id: $0.id, title: $0.title, state: .passed, detail: "Preview only") }
+            provisioningExitCode = 0
             phase = .permissions
             isComplete = true
         }
@@ -66,21 +80,26 @@ final class SetupController: ObservableObject {
     }
 
     var summary: String {
+        if isPreparing { return preparationDetail }
         if isRunning { return "Setup is running. Keep this Mac connected to power." }
         if isComplete {
             if steps.contains(where: { $0.state == .failed }) { return "Setup finished with errors. Review the failed steps." }
+            if !provisioningPassed { return "Resolve the warnings or incomplete steps, then run setup again." }
             if hasActionRequired { return "Automated setup finished. Privacy approval is still required." }
             return "Setup completed successfully."
         }
-        return "Install and configure this Mac from the attached USB payload."
+        return offlinePayloadURL == nil ? "Download approved installers and configure this Mac." : "Use approved installers from the selected offline payload."
     }
 
     var hasActionRequired: Bool {
         steps.contains { $0.state == .actionRequired }
     }
 
+    var provisioningPassed: Bool {
+        Readiness.provisioningPassed(exitCode: provisioningExitCode, states: Dictionary(uniqueKeysWithValues: steps.map { ($0.id, $0.state.rawValue) }), requiredSteps: Set(Self.initialSteps.map(\.id)))
+    }
     var allPermissionStepsConfirmed: Bool {
-        Self.requiredPermissionIDs.isSubset(of: confirmedPermissionIDs)
+        Readiness.canFinish(exitCode: provisioningExitCode, states: Dictionary(uniqueKeysWithValues: steps.map { ($0.id, $0.state.rawValue) }), requiredSteps: Set(Self.initialSteps.map(\.id)), confirmations: confirmedPermissionIDs)
     }
 
     var zoomApplicationURL: URL? {
@@ -95,58 +114,89 @@ final class SetupController: ObservableObject {
 
     func start() {
         guard !isRunning else { return }
-
-        let payloadURL = resolvePayloadURL()
-        let scriptURL = resolveBootstrapURL()
-        guard FileManager.default.fileExists(atPath: payloadURL.appendingPathComponent("config/setup-config.json").path) else {
-            presentError("The payload was not found at \(payloadURL.path). Place the ZoomtopiaPayload folder beside the app.")
+        guard let resources = Bundle.main.resourceURL,
+              FileManager.default.isExecutableFile(atPath: resources.appendingPathComponent("PayloadVerifier").path) else {
+            presentError("The setup app is incomplete. Build or download the complete app bundle.")
             return
         }
-        guard FileManager.default.isExecutableFile(atPath: scriptURL.path) else {
-            presentError("The bundled setup script is missing or not executable.")
-            return
-        }
-
         steps = Self.initialSteps
         phase = .setup
         confirmedPermissionIDs = []
+        provisioningExitCode = nil
         completedCount = 0
-        totalCount = steps.count
         isRunning = true
+        isPreparing = true
         isComplete = false
-
-        let status = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zoomtopia-status-\(UUID().uuidString).jsonl")
-        FileManager.default.createFile(atPath: status.path, contents: Data())
-        statusURL = status
-
-        let command = [
-            "/bin/bash", scriptURL.path,
-            "--payload", payloadURL.path,
-            "--status", status.path,
-            "--log", Self.logPath
-        ].map(Self.shellQuote).joined(separator: " ")
-        let appleScript = "do shell script \(Self.appleScriptLiteral(command)) with administrator privileges"
-
-        Task {
-            let monitor = Task { await monitorStatus(at: status) }
-            let result = await Task.detached(priority: .userInitiated) {
-                Self.runAppleScript(appleScript)
-            }.value
-            monitor.cancel()
-            await readStatus(at: status)
-            isRunning = false
-            isComplete = true
-            if result.exitCode != 0 && !steps.contains(where: { $0.state == .failed }) {
-                presentError(result.output.isEmpty ? "Setup was cancelled or failed." : result.output)
-            } else if !steps.contains(where: { $0.state == .failed }) {
-                phase = .permissions
+        downloadProgress = 0
+        preparationDetail = "Preparing approved installers…"
+        let offline = offlinePayloadURL ?? ProcessInfo.processInfo.environment["ZOOMTOPIA_PAYLOAD_ROOT"].map { URL(fileURLWithPath: $0) }
+        setupTask = Task {
+            var statusDirectory: URL?
+            defer {
+                isRunning = false; isPreparing = false; setupTask = nil
+                if let statusDirectory { try? FileManager.default.removeItem(at: statusDirectory) }
+            }
+            do {
+                let prepared = try await PayloadPreparation.prepare(resources: resources, offline: offline) { [weak self] _, detail, fraction in
+                    Task { @MainActor in
+                        guard let self, self.isPreparing else { return }
+                        self.preparationDetail = detail; self.downloadProgress = fraction
+                    }
+                }
+                defer { withExtendedLifetime(prepared) {} }
+                try Task.checkCancellation()
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("zoomtopia-status-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                statusDirectory = directory
+                let status = directory.appendingPathComponent("events.jsonl")
+                guard FileManager.default.createFile(atPath: status.path, contents: Data(), attributes: [.posixPermissions: 0o600]) else { throw SetupFailure("Cannot create status file") }
+                statusURL = status
+                isPreparing = false
+                // Snapshot the entire signed bundle under root ownership, verify the snapshot,
+                // then execute only that immutable copy across the privilege boundary.
+                let requirement = try SigningIdentity.runningRequirement()
+                let command = "set -eu; snapshot=$(/usr/bin/mktemp -d /private/var/tmp/zoomtopia-app.XXXXXX); "
+                    + "trap '/bin/rm -rf \"$snapshot\"' EXIT; "
+                    + "/usr/bin/ditto " + Self.shellQuote(Bundle.main.bundleURL.path) + " \"$snapshot/Setup.app\"; "
+                    + "/usr/bin/codesign --verify --deep --strict \"$snapshot/Setup.app\"; "
+                    + "/usr/bin/codesign --verify --strict --architecture " + SigningIdentity.runningArchitecture + " -R " + Self.shellQuote("=" + requirement) + " \"$snapshot/Setup.app\"; "
+                    + "\"$snapshot/Setup.app/Contents/Resources/PayloadVerifier\" --run " + Self.shellQuote(prepared.url.path) + " " + Self.shellQuote(status.path)
+                let appleScript = "do shell script \(Self.appleScriptLiteral(command)) with administrator privileges"
+                let monitor = Task { await monitorStatus(at: status) }
+                let result = await Task.detached(priority: .userInitiated) { Self.runAppleScript(appleScript) }.value
+                monitor.cancel()
+                await readStatus(at: status)
+                provisioningExitCode = result.exitCode
+                isComplete = true
+                if result.exitCode != 0 {
+                    presentError(result.output.isEmpty ? "Setup was cancelled or failed. Review the setup summary and log." : result.output)
+                } else if provisioningPassed {
+                    phase = .permissions
+                }
+            } catch is CancellationError {
+                preparationDetail = "Preparation cancelled. Verified downloads are retained for retry."
+            } catch {
+                isComplete = true
+                if let index = steps.firstIndex(where: { $0.id == "payload" }) {
+                    steps[index].state = .failed; steps[index].detail = error.localizedDescription
+                }
+                presentError(error.localizedDescription)
             }
         }
     }
 
+    func cancelPreparation() { if isPreparing { setupTask?.cancel() } }
+
+    func chooseOfflinePayload() {
+        guard !isRunning else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+        panel.message = "Choose a payload containing the approved installer packages. Configuration comes from this signed app."
+        if panel.runModal() == .OK { offlinePayloadURL = panel.url }
+    }
+
     func showPermissionAssistant() {
-        guard isComplete else { return }
+        guard isComplete && provisioningPassed else { return }
         phase = .permissions
     }
 
@@ -206,10 +256,6 @@ final class SetupController: ObservableObject {
         openSystemSettings(anchor: "Privacy_ScreenCapture")
     }
 
-    func revealPayload() {
-        NSWorkspace.shared.activateFileViewerSelecting([resolvePayloadURL()])
-    }
-
     func openLog() {
         NSWorkspace.shared.open(URL(fileURLWithPath: Self.logPath))
     }
@@ -252,26 +298,6 @@ final class SetupController: ObservableObject {
         completedCount = latest.values.filter { $0.state != .pending && $0.state != .running }.count
     }
 
-    private func resolvePayloadURL() -> URL {
-        if let override = ProcessInfo.processInfo.environment["ZOOMTOPIA_PAYLOAD_ROOT"] {
-            return URL(fileURLWithPath: override, isDirectory: true)
-        }
-        if Bundle.main.bundleURL.pathExtension == "app" {
-            return Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("ZoomtopiaPayload", isDirectory: true)
-        }
-        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("ZoomtopiaPayload", isDirectory: true)
-    }
-
-    private func resolveBootstrapURL() -> URL {
-        if let resourceURL = Bundle.main.resourceURL {
-            let bundled = resourceURL.appendingPathComponent("bootstrap.sh")
-            if FileManager.default.fileExists(atPath: bundled.path) { return bundled }
-        }
-        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Scripts/bootstrap.sh")
-    }
-
     private func presentError(_ message: String) {
         errorMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         showingError = true
@@ -286,8 +312,8 @@ final class SetupController: ObservableObject {
         process.standardError = pipe
         do {
             try process.run()
-            process.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
             return CommandResult(exitCode: process.terminationStatus, output: String(data: data, encoding: .utf8) ?? "")
         } catch {
             return CommandResult(exitCode: 1, output: error.localizedDescription)
@@ -306,7 +332,7 @@ final class SetupController: ObservableObject {
 
     private static let initialSteps: [SetupStep] = [
         .init(id: "validate", title: "Validate Mac", state: .pending, detail: ""),
-        .init(id: "payload", title: "Verify USB payload", state: .pending, detail: ""),
+        .init(id: "payload", title: "Verify prepared payload", state: .pending, detail: ""),
         .init(id: "chrome", title: "Install Google Chrome", state: .pending, detail: ""),
         .init(id: "zoom", title: "Install Zoom Workplace", state: .pending, detail: ""),
         .init(id: "zoom-config", title: "Configure Zoom Workplace", state: .pending, detail: ""),
@@ -318,7 +344,4 @@ final class SetupController: ObservableObject {
         .init(id: "verify", title: "Final verification", state: .pending, detail: "")
     ]
 
-    private static let requiredPermissionIDs: Set<String> = [
-        "camera", "microphone", "screen-recording", "audio-test"
-    ]
 }

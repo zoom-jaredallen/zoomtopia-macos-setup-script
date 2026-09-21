@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "id": "chrome",
+      "name": "Google Chrome",
+      "filename": "GoogleChrome.pkg",
+      "version": "153.0.8010.53",
+      "versionKey": "CFBundleShortVersionString",
+      "architectures": [
+        "arm64",
+        "x86_64"
+      ],
+      "url": "https://dl.google.com/dl/chrome/mac/universal/stable/gcem/GoogleChrome.pkg",
+      "allowedHosts": [
+        "dl.google.com"
+      ],
+      "sha256": "56d9e433712939b2bdec739576cf1947a1d3381984ac5cc0580806174ee8b1b5",
+      "size": 264121851,
+      "teamID": "EQHXZ8M8AV",
+      "installerIdentity": "Developer ID Installer: Google LLC (EQHXZ8M8AV)",
+      "bundleID": "com.google.Chrome",
+      "applicationPaths": [
+        "/Applications/Google Chrome.app"
+      ]
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom Workplace",
+      "filename": "ZoomWorkplace.pkg",
+      "version": "7.2.0.88195",
+      "versionKey": "CFBundleVersion",
+      "architectures": [
+        "arm64",
+        "x86_64"
+      ],
+      "url": "https://cdn.zoom.us/prod/7.2.0.88195/ZoomInstallerIT.pkg",
+      "allowedHosts": [
+        "cdn.zoom.us"
+      ],
+      "sha256": "f4c4634dd85adae566d7ab7d2e8306fc45f0eb47ea83490c552226dfc705df40",
+      "size": 383127699,
+      "teamID": "BJ4HAAB9B3",
+      "installerIdentity": "Developer ID Installer: Zoom Communications, Inc. (BJ4HAAB9B3)",
+      "bundleID": "us.zoom.xos",
+      "applicationPaths": [
+        "/Applications/zoom.us.app",
+        "/Applications/Zoom Workplace.app"
+      ]
+    }
+  ]
+}

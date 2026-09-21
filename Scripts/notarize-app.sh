@@ -25,3 +25,4 @@ ZIP_PATH="$PROJECT_ROOT/dist/Zoomtopia-Setup-notarization.zip"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$APP_PATH"
 
 echo "Notarized and stapled: $APP_PATH"
+"$PROJECT_ROOT/Scripts/package-release.sh" "$APP_PATH"
