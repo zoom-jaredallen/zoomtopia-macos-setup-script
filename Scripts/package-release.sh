@@ -6,7 +6,7 @@ APP_PATH="${1:-$PROJECT_ROOT/dist/Zoomtopia Setup.app}"
 /usr/bin/xcrun stapler validate "$APP_PATH"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$APP_PATH"
 for binary in "$APP_PATH/Contents/MacOS/Zoomtopia Setup" "$APP_PATH/Contents/Resources/PayloadVerifier"; do
-    /usr/bin/lipo -verify_arch x86_64 arm64 "$binary"
+    /usr/bin/lipo "$binary" -verify_arch x86_64 arm64
 done
 "$APP_PATH/Contents/Resources/PayloadVerifier" --validate-resources
 ZIP_PATH="$PROJECT_ROOT/dist/Zoomtopia-Setup.zip"

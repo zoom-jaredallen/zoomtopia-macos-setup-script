@@ -15,7 +15,7 @@ jobs:
         run: ./Scripts/build-app.sh
       - name: Verify bundle
         run: |
-          lipo -verify_arch x86_64 arm64 "dist/Zoomtopia Setup.app/Contents/MacOS/Zoomtopia Setup"
-          lipo -verify_arch x86_64 arm64 "dist/Zoomtopia Setup.app/Contents/Resources/PayloadVerifier"
+          lipo "dist/Zoomtopia Setup.app/Contents/MacOS/Zoomtopia Setup" -verify_arch x86_64 arm64
+          lipo "dist/Zoomtopia Setup.app/Contents/Resources/PayloadVerifier" -verify_arch x86_64 arm64
           codesign --verify --deep --strict "dist/Zoomtopia Setup.app"
           plutil -lint "dist/Zoomtopia Setup.app/Contents/Info.plist"
