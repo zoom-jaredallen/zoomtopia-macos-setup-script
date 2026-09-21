@@ -88,7 +88,7 @@ final class SetupController: ObservableObject {
             if hasActionRequired { return "Automated setup finished. Privacy approval is still required." }
             return "Setup completed successfully."
         }
-        return offlinePayloadURL == nil ? "Download approved installers and configure this Mac." : "Use approved installers from the selected offline payload."
+        return offlinePayloadURL == nil ? "Check current Chrome and Zoom versions, upgrade if needed, and configure this Mac." : "Use approved installers from the selected offline payload."
     }
 
     var hasActionRequired: Bool {
@@ -128,7 +128,7 @@ final class SetupController: ObservableObject {
         isPreparing = true
         isComplete = false
         downloadProgress = 0
-        preparationDetail = "Preparing approved installers…"
+        preparationDetail = "Checking current installers…"
         let offline = offlinePayloadURL ?? ProcessInfo.processInfo.environment["ZOOMTOPIA_PAYLOAD_ROOT"].map { URL(fileURLWithPath: $0) }
         setupTask = Task {
             var statusDirectory: URL?
@@ -174,7 +174,7 @@ final class SetupController: ObservableObject {
                     phase = .permissions
                 }
             } catch is CancellationError {
-                preparationDetail = "Preparation cancelled. Verified downloads are retained for retry."
+                preparationDetail = "Preparation cancelled. Temporary downloads have been removed."
             } catch {
                 isComplete = true
                 if let index = steps.firstIndex(where: { $0.id == "payload" }) {

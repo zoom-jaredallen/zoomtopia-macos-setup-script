@@ -9,7 +9,10 @@ final class PolicyTests: XCTestCase {
         XCTAssertEqual(try PackagePolicy.decision(installed: nil, approved: "7.2.0.88195"), .install)
         XCTAssertEqual(try PackagePolicy.decision(installed: "7.1.9", approved: "7.2.0.88195"), .install)
         XCTAssertEqual(try PackagePolicy.decision(installed: "7.2.0.88195", approved: "7.2.0.88195"), .skip)
-        XCTAssertEqual(try PackagePolicy.decision(installed: "7.10", approved: "7.2.0.88195"), .blocked)
+        XCTAssertEqual(try PackagePolicy.decision(installed: "7.10", approved: "7.2.0.88195"), .skip)
+        XCTAssertEqual(try PackagePolicy.decision(installed: "153.0.8010.53", approved: "153.0.8010.53"), .skip)
+        XCTAssertEqual(try PackagePolicy.decision(installed: "152.0.1", approved: "153.0.8010.53"), .install)
+        XCTAssertEqual(try PackagePolicy.decision(installed: "154.0.1", approved: "153.0.8010.53"), .skip)
         XCTAssertThrowsError(try PackagePolicy.decision(installed: "unknown", approved: "7.2"))
     }
     func testRejectsUnsafeRelativePathsAndURLs() throws {

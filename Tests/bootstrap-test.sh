@@ -19,3 +19,16 @@ expected='<asuser>
 <true>'
 [[ "$actual" == "$expected" ]] || { echo "FAIL: run_as_user forwarded incorrect arguments"; exit 1; }
 echo "PASS: run_as_user drops username and preserves command arguments"
+
+# Exercise the real installed-current branch with a fake verifier. No installer runs.
+eval "$(sed -n '/^install_approved_package() {/,/^}/p' Scripts/bootstrap.sh)"
+VERIFIER=test_verifier
+function test_verifier() { [[ "$1" == '--decision' ]] || return 1; printf 'skip\n'; }
+function emit() { printf '%s:%s\n' "$2" "$4"; }
+function fail_step() { echo 'unexpected failure'; return 1; }
+for app in chrome zoom; do
+    actual=$(install_approved_package 3 "$app" "Check app" Missing.pkg)
+    [[ "$actual" == "$app:running
+$app:skipped" ]] || { echo "FAIL: current $app did not finish as skipped"; exit 1; }
+done
+echo 'PASS: current Chrome and Zoom skip without accessing installer or installation state'

@@ -34,6 +34,7 @@ fi
 touch "$LOG_FILE" || exit 1
 chmod 644 "$LOG_FILE" || exit 1
 VERIFIER="$RESOURCES/PayloadVerifier"
+export ZOOMTOPIA_VERIFIED_CATALOG="$PAYLOAD_ROOT/package-catalog.json"
 [[ -x "$VERIFIER" && -d "$PAYLOAD_ROOT/Installers" ]] || exit 1
 exec >> "$LOG_FILE" 2>&1
 
@@ -104,13 +105,13 @@ ZOOM_APP="/Applications/zoom.us.app"
 
 install_approved_package() {
     local index="$1" id="$2" title="$3" filename="$4" decision package_path state_dir
-    emit "$index" "$id" "$title" running "Checking the approved installed version"
+    emit "$index" "$id" "$title" running "Comparing installed version with the verified installer"
     decision=$("$VERIFIER" --decision "$id") || {
         fail_step "$index" "$id" "$title" "Existing app identity or version needs administrator review"
         return
     }
     if [[ "$decision" == "skip" ]]; then
-        emit "$index" "$id" "$title" skipped "Approved signed version already installed"
+        emit "$index" "$id" "$title" skipped "Current or newer signed version already installed"
         return
     fi
     package_path="$PAYLOAD_ROOT/Installers/$filename"

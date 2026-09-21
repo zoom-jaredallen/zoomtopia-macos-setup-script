@@ -2,6 +2,8 @@ import Foundation
 
 public final class PackageDownload: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let spec: PackageSpec
+    private let latest: Bool
+    private var limit: Int64 { latest ? 1_999_999_999 : spec.size }
     private let destination: URL
     private let configuration: URLSessionConfiguration
     private let progress: @Sendable (Double) -> Void
@@ -13,8 +15,8 @@ public final class PackageDownload: NSObject, URLSessionDownloadDelegate, @unche
     private var redirects = 0
     private var downloaded = false
 
-    public init(spec: PackageSpec, destination: URL, configuration: URLSessionConfiguration = .ephemeral, progress: @escaping @Sendable (Double) -> Void) {
-        self.spec = spec; self.destination = destination; self.configuration = configuration; self.progress = progress
+    public init(spec: PackageSpec, destination: URL, configuration: URLSessionConfiguration = .ephemeral, latest: Bool = false, progress: @escaping @Sendable (Double) -> Void) {
+        self.latest = latest; self.spec = spec; self.destination = destination; self.configuration = configuration; self.progress = progress
     }
     public func run() async throws {
         try await withTaskCancellationHandler(operation: {
@@ -46,11 +48,11 @@ public final class PackageDownload: NSObject, URLSessionDownloadDelegate, @unche
         completionHandler(request)
     }
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesWritten > spec.size || totalBytesExpectedToWrite > spec.size {
+        if totalBytesWritten > limit || totalBytesExpectedToWrite > limit {
             failure = SetupFailure("\(spec.name) download exceeds the approved package size")
             downloadTask.cancel(); return
         }
-        progress(min(1, Double(totalBytesWritten) / Double(spec.size)))
+        progress(min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : limit)))
     }
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         do {
@@ -58,7 +60,7 @@ public final class PackageDownload: NSObject, URLSessionDownloadDelegate, @unche
                   let url = response.url, DownloadPolicy.allows(url, hosts: spec.allowedHosts) else {
                 throw SetupFailure("\(spec.name) download failed (HTTP \((downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0)). Check network access or obtain a newer setup app.")
             }
-            try SafeFiles.copyVerified(from: location, to: destination, sha256: spec.sha256, maxBytes: spec.size)
+            try SafeFiles.copyVerified(from: location, to: destination, sha256: latest ? SafeFiles.hash(location, maxBytes: limit) : spec.sha256, maxBytes: limit)
             downloaded = true
         } catch { failure = error }
     }

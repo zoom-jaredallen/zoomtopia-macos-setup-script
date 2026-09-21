@@ -6,6 +6,7 @@ import SetupCore
 
 let resources = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent()
 let args = Array(CommandLine.arguments.dropFirst())
+let catalogURL = ProcessInfo.processInfo.environment["ZOOMTOPIA_VERIFIED_CATALOG"].map { URL(fileURLWithPath: $0) } ?? resources.appendingPathComponent("package-catalog.json")
 let ids = ["validate", "payload", "chrome", "zoom", "zoom-config", "trackpad", "wallpaper", "aliases", "privacy", "updates", "verify"]
 
 func appendStatus(_ path: String, data: Data) throws {
@@ -57,24 +58,23 @@ do {
         try appendStatus(args[1], data: Data((args[2] + "\n").utf8))
     case "--decision":
         guard args.count == 2 else { throw SetupFailure("Missing package ID") }
-        let catalog = try PackageCatalog.load(resources.appendingPathComponent("package-catalog.json"))
+        let catalog = try PackageCatalog.load(catalogURL)
         guard let spec = catalog.packages.first(where: { $0.id == args[1] }) else { throw SetupFailure("Unknown package") }
         switch try PackageVerifier.decision(spec) {
         case .skip: print("skip")
         case .install: print("install")
-        case .blocked: throw SetupFailure("\(spec.name) version is newer than the approved release; it was preserved")
         }
     case "--verify-apps":
-        for spec in try PackageCatalog.load(resources.appendingPathComponent("package-catalog.json")).packages {
+        for spec in try PackageCatalog.load(catalogURL).packages {
             guard try PackageVerifier.decision(spec) == .skip else { throw SetupFailure("\(spec.name) is not the approved version") }
         }
     case "--verify-package":
         guard args.count == 3 else { throw SetupFailure("Expected ID and path") }
-        let catalog = try PackageCatalog.load(resources.appendingPathComponent("package-catalog.json"))
+        let catalog = try PackageCatalog.load(catalogURL)
         guard let spec = catalog.packages.first(where: { $0.id == args[1] }) else { throw SetupFailure("Unknown package") }
         try PackageVerifier.verify(URL(fileURLWithPath: args[2]), spec: spec)
     case "--validate-resources":
-        _ = try PackageCatalog.load(resources.appendingPathComponent("package-catalog.json"))
+        _ = try PackageCatalog.load(catalogURL)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: target) }
         try ResourceManifest.load(resources).copy(from: resources.appendingPathComponent("Payload"), to: target)

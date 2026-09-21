@@ -21,12 +21,12 @@ Key components:
 - `Sources/ZoomtopiaSetupApp/ZoomtopiaSetupApp.swift`: provisioning UI, Zoom permission assistant, and final-ready screen.
 - `Sources/ZoomtopiaSetupApp/SetupController.swift`: phase/state model, root-script invocation, progress-file polling, Zoom launch/test actions, and System Settings links.
 - `Sources/ZoomtopiaSetupApp/Branding.swift` and `AppResources/`: dark Zoomtopia design tokens and bundled wordmark.
-- `Sources/SetupCore/`: package catalog/policy, downloader, cache, resource validation, signing identity, and readiness rules.
+- `Sources/SetupCore/`: package catalog/policy, downloader, signed installer metadata, resource validation, signing identity, and readiness rules.
 - `Sources/PayloadVerifier/main.swift`: privileged verification/staging entry point and safe event writer.
 - `Scripts/bootstrap.sh`: privileged, idempotent provisioning engine.
 - `Scripts/update-policy.sh`: restart tracking across boot sessions.
 - `ZoomtopiaPayload/`: build-time wallpaper/configuration/profile inputs and optional offline packages.
-- `AppResources/package-catalog.json`: approved package bytes, versions, sources, and vendor identities.
+- `AppResources/package-catalog.json`: offline package bytes, minimum online versions, current vendor sources, and trusted vendor identities.
 - `scripts/build-app.sh`: creates a self-contained universal Intel/Apple Silicon app and verifier in `dist/`.
 - `scripts/generate-checksums.sh`: regenerates the external payload manifest.
 - `scripts/notarize-app.sh`: submits and staples the Developer ID build.
@@ -35,7 +35,7 @@ Key components:
 
 ## Core invariants
 
-- **Idempotent:** every privileged operation detects existing state. An authentic installed app at the approved version is skipped; successful installer hashes remain recorded under `/var/db/com.zoom.zoomtopiasetup`. Never silently downgrade newer apps.
+- **Idempotent:** every privileged operation detects existing state. An authentic installed app at or above the current signed installer version is skipped; successful installer hashes remain recorded under `/var/db/com.zoom.zoomtopiasetup`. Never silently downgrade newer apps.
 - **Authentic:** verify every consumed resource/package against the signed manifest/catalog and vendor identity before installation from private root-owned staging. Keep the app separately Developer ID signed and notarized.
 - **Observable:** every bootstrap step emits running and terminal JSONL events. A failure must be visible in the UI and `/var/log/zoomtopia-setup.log`.
 - **Architecture-aware:** offline filenames prefer `Name-arm64.pkg` or `Name-x86_64.pkg`, falling back to `Name.pkg`; bytes must match the catalog. The current approved packages are universal. Preserve both app slices in release builds.
@@ -80,7 +80,7 @@ Run the real **Start Setup** flow only on an authorized staging/test Mac with pr
 
 ## Deployment boundaries
 
-- The repository contains the event wallpapers and build-time configuration, but no vendor installers. Online mode downloads pinned vendor packages; offline mode accepts only packages matching the signed catalog.
+- The repository contains the event wallpapers and build-time configuration, but no vendor installers. Online mode downloads current vendor packages and authenticates signed version metadata; offline mode accepts only packages matching the bundled catalog. Root derives its per-run catalog from authenticated private package copies.
 - The final downloadable ZIP must be created after stapling and pass `Scripts/package-release.sh`.
 - Development builds are ad-hoc signed. Distribution requires the user's Developer ID Application identity and notarization credentials described in the README.
 - A local `.mobileconfig` may still require user approval and cannot provide the guarantees of supervised MDM. Keep the guided permission flow functional when no profile is present.

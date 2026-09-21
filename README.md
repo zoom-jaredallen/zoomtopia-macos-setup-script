@@ -1,6 +1,6 @@
 # Zoomtopia Mac Setup
 
-A native macOS provisioning app for approximately 220 short-lived Zoomtopia lab MacBooks. It downloads approved Chrome and Zoom installers when needed, requests administrator authorization once for provisioning, reports live progress, and guides the operator through the final Zoom checks.
+A native macOS provisioning app for approximately 220 short-lived Zoomtopia lab MacBooks. It checks the current vendor Chrome and Zoom installers and upgrades older installations, requests administrator authorization once for provisioning, reports live progress, and guides the operator through the final Zoom checks.
 
 **Web workflow implemented; release qualification is still required.** The candidate catalog contains Chrome **153.0.8010.53** and Zoom IT Admin **7.2.0.88195**, downloaded from the official vendors on 2026-09-21. Package signatures, hashes, metadata and both executable architectures were inspected. These are candidate versions, not a claim of lab acceptance testing. A deployment download must be notarized and piloted on representative staging Macs.
 
@@ -9,7 +9,7 @@ A native macOS provisioning app for approximately 220 short-lived Zoomtopia lab 
 1. Log into the account students will use, connect AC power, and join the approved network.
 2. Visit the staging lead's short link or the [release page](https://github.com/zoom-jaredallen/zoomtopia-macos-setup-script/releases). Download the approved release's **Zoomtopia-Setup.zip**, not GitHub's source-code ZIP.
 3. Expand the ZIP and open **Zoomtopia Setup.app**. Confirm the normal macOS first-launch dialog.
-4. Click **Start Setup**. The app checks installed versions, reuses verified cached packages, and downloads any required packages before requesting administrator credentials.
+4. Click **Start Setup**. The app downloads the current vendor installers, verifies their signatures, and compares their signed versions with installed Chrome and Zoom before requesting administrator credentials. Current or newer installations continue automatically; older versions are upgraded.
 5. Authorize setup in the macOS dialog. The app installs/configures software, trackpad preferences, wallpaper and Desktop shortcuts, and processes macOS updates.
 6. Resolve any warnings, including required restarts, and rerun. Once automated checks pass, confirm Camera, Microphone, Screen & System Audio Recording, and speaker testing. **Mark Mac Ready** requires all four confirmations.
 
@@ -19,9 +19,11 @@ Privacy consent, optional profile approval, and some macOS updates can require f
 
 The app is self-contained: wallpapers, configuration, the package catalog, and verifier are inside its signed bundle. It works without a sibling payload folder, including when macOS translocates a downloaded app.
 
-Online mode uses the official vendor URLs in `AppResources/package-catalog.json`. Packages are pinned by SHA-256, expected installer identity, version, and supported architectures. The current vendor packages are universal. An authentic installed app at the exact approved version is skipped; an older version is upgraded; a newer, conflicting, or unverifiable app is preserved and reported for administrator review. Installer hashes are also recorded after successful installation.
+Online mode uses the official current Chrome stable and Zoom IT Admin installer URLs in `AppResources/package-catalog.json`. Each run downloads both packages to determine the versions from vendor-signed `Distribution` metadata. An authentic installed app at that version or newer is skipped automatically; an older or missing app is installed. Newer installations are never downgraded. Conflicting, unverifiable or incompatible installations still stop with a specific error.
 
-Chrome's current URL serves a moving stable package. If Google changes it, the pinned hash intentionally rejects the replacement. Refresh and test the catalog and publish a new app release; never bypass the check. Zoom's candidate URL is version-specific.
+The bundled catalog fixes vendor signing identities, bundle identifiers, permitted HTTPS hosts, minimum versions and offline package hashes. Online packages may change without rebuilding the setup app: the downloaded package must have the expected trusted vendor signature and a signed version at least as new as the bundled minimum. Its SHA-256 is computed locally to protect subsequent copies; this is distinct from offline mode's release-pinned checksum. A failed online check stops visibly rather than claiming a cached version is latest. “Current” means the package served by the vendor endpoint at preparation time; staged vendor rollouts can differ from another Mac's auto-update channel.
+
+Vendor sources: [Google's current stable package guidance](https://support.google.com/chrome/a/answer/9915669?hl=en) and [Zoom's current IT Admin installer](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0060407).
 
 For offline staging, choose **Offline Payload…** and select:
 
@@ -32,7 +34,7 @@ ZoomtopiaPayload/
     └── ZoomWorkplace.pkg
 ```
 
-Architecture-suffixed names (`GoogleChrome-arm64.pkg`, for example) take precedence, but the bytes must match this app's approved catalog. Offline mode never fetches a missing package from the web. **Use Online Downloads** restores network mode. `ZOOMTOPIA_PAYLOAD_ROOT` is also supported for controlled local launches.
+Architecture-suffixed names (`GoogleChrome-arm64.pkg`, for example) take precedence, but the bytes must match this app's approved catalog. Both installers must be supplied in offline mode, which compares against the bundled approved versions and cannot establish the latest online version. Offline mode never fetches a missing package from the web. **Use Online Downloads** restores network mode. `ZOOMTOPIA_PAYLOAD_ROOT` is also supported for controlled local launches.
 
 Offline folders supply installers only. Configuration and optional privacy profiles must be selected at build time and sealed into the signed bundle; arbitrary external configuration is not trusted at runtime. The optional `checksums.txt` is an inventory aid, not the trust anchor.
 
@@ -42,7 +44,7 @@ Offline folders supply installers only. Configuration and optional privacy profi
 - `ZoomtopiaPayload/config/us.zoom.config.plist`: active managed Zoom preferences. An example is retained alongside it.
 - `ZoomtopiaPayload/assets/`: blue and green event wallpapers.
 - `ZoomtopiaPayload/config/ZoomPrivacy.mobileconfig`: optional tested profile, bundled only when present. Never commit profiles containing private enrollment data.
-- `AppResources/package-catalog.json`: exact approved versions, package URLs, hashes, sizes, bundle identifiers, version keys and expected vendor signing identities.
+- `AppResources/package-catalog.json`: offline approved versions/hashes/sizes, online minimum versions, current vendor URLs, bundle identifiers, version keys and expected vendor signing identities.
 
 To refresh a candidate, download its official Enterprise/IT Admin package on the maintainer Mac; run `pkgutil --check-signature`, calculate `shasum -a 256`, and inspect `pkgutil --expand-full` output for app versions, supported macOS releases and architectures. Update the catalog with those observed values. Use `CFBundleShortVersionString` for Chrome and `CFBundleVersion` for Zoom. Keep the redirect host list explicit. Build, use the bundled verifier's `--verify-package ID PATH`, and pilot before release. Do not install vendor packages just to inspect them.
 
@@ -98,9 +100,9 @@ After staging acceptance, create a versioned GitHub Release and upload `dist/Zoo
 
 ## Integrity, reruns, and diagnostics
 
-The operator downloads into `~/Library/Caches/com.zoom.zoomtopiasetup`. Downloads use HTTPS, approved redirect hosts, size bounds and a pinned digest. Network interruptions have bounded retries; TLS, policy and integrity failures stop preparation. Cancel is available before authorization. Successful cached packages survive reruns; obsolete app-owned cache files are removed under a single-run lock.
+The operator downloads into a private run directory under `~/Library/Caches/com.zoom.zoomtopiasetup`. Downloads use HTTPS, approved redirect hosts, a 2 GB per-package size bound and vendor signature verification. Network interruptions have bounded retries; TLS, policy and integrity failures stop preparation. Cancel is available before authorization. Both installers are downloaded on each online run, including when both installed apps are current; packages are removed when the run ends. Allow at least 8 GB of free space for download and staging. A single-run lock prevents competing preparations.
 
-Before privileged execution, the app reads its running-process identity from the Security framework, copies its complete bundle into private root-owned storage, and verifies the snapshot against that exact running CDHash. The helper copies only manifest-approved resources and required packages into a second private directory and verifies those copies before Bash uses them. Another root-level lock prevents concurrent installations across users. Temporary privileged copies are removed after completion; a process killed forcibly may leave a private temporary directory for administrator cleanup.
+Before privileged execution, the app reads its running-process identity from the Security framework, copies its complete bundle into private root-owned storage, and verifies the snapshot against that exact running CDHash. The helper copies only manifest-approved resources and both packages into a second private directory, verifies their vendor signatures and signed versions again, and creates a root-owned per-run catalog before Bash uses them. The user cannot supply a replacement vendor identity or application path. Another root-level lock prevents concurrent installations across users. Temporary privileged copies are removed after completion; a process killed forcibly may leave a private temporary directory for administrator cleanup.
 
 Bootstrap events are written to the operator-owned status file; persistent diagnostics go to `/var/log/zoomtopia-setup.log`. Successful installation hashes live under `/var/db/com.zoom.zoomtopiasetup`. Existing Desktop collisions are preserved. Warnings block final readiness until resolved and the run succeeds. For conservative restart handling, any software-update installation records the current boot session and requires a restart, even if that particular update might not strictly require one. A same-boot rerun cannot clear the requirement; a new boot and clean update check can.
 
@@ -108,6 +110,6 @@ Bootstrap events are written to the operator-owned status file; persistent diagn
 
 Test a real browser download on clean Intel and Apple Silicon staging Macs and each supported macOS version. Exercise first-launch quarantine/translocation, authorization denial, offline/missing packages, proxy/TLS failure, bad hashes/signatures, cancellation, interruption, reruns, profile collisions and pending restarts. Confirm the four-check gate and actual camera/microphone/screen/audio behavior.
 
-Corporate IT must allow execution and the actual download destinations. The current package hosts are `dl.google.com` and `cdn.zoom.us`; GitHub release asset redirects and Apple's trust/notarization services also need to work. Measure staging bandwidth: the current two packages total approximately 647 MB per Mac when both are needed (about 142 GB for 220 Macs), excluding app downloads and OS updates. A corporate/on-site HTTPS mirror can be added as an explicitly approved catalog source if needed.
+Corporate IT must allow execution and the actual download destinations. The current package hosts are `dl.google.com`, `zoom.us` and `cdn.zoom.us`; GitHub release asset redirects and Apple's trust/notarization services also need to work. Measure staging bandwidth: the current two packages total approximately 647 MB per online run on each Mac (about 142 GB for 220 Macs), excluding app downloads and OS updates. A corporate/on-site HTTPS mirror can be added as an explicitly approved catalog source if needed.
 
 The architecture and original rationale are in [Web distribution scope](docs/web-distribution-scope.md).

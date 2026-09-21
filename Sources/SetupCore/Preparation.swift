@@ -18,12 +18,10 @@ public enum PayloadPreparation {
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cache.path)
         let lock = try RunLock(url: cache.appendingPathComponent("setup.lock"))
         let catalog = try PackageCatalog.load(resources.appendingPathComponent("package-catalog.json"))
-        let validNames = Set(catalog.packages.map { $0.sha256 + ".pkg" }).union(["setup.lock"])
-        for url in try fm.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil) where !validNames.contains(url.lastPathComponent) {
-            let name = url.lastPathComponent
-            // Delete only artifacts this component owns, never arbitrary files in the directory.
-            if name.range(of: "^[a-f0-9]{64}\\.pkg$|^[A-Fa-f0-9-]{36}\\.partial$|^run-[A-Fa-f0-9-]{36}$", options: .regularExpression) != nil {
-                try fm.removeItem(at: url)
+        // The lock makes these artifacts stale; normal deinit cannot clean up a killed process.
+        for entry in try fm.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil) {
+            if entry.lastPathComponent.range(of: "^[a-f0-9]{64}\\.pkg$|^[A-Fa-f0-9-]{36}\\.partial$|^run-[A-Fa-f0-9-]{36}$", options: .regularExpression) != nil {
+                try fm.removeItem(at: entry)
             }
         }
         let destination = cache.appendingPathComponent("run-\(UUID().uuidString)")
@@ -31,51 +29,43 @@ public enum PayloadPreparation {
         let prepared = PreparedPayload(url: destination, lock: lock)
         for spec in catalog.packages {
             try Task.checkCancellation()
-            progress(spec.id, "Checking installed \(spec.name)", 0)
-            switch try PackageVerifier.decision(spec) {
-            case .skip: progress(spec.id, "Approved version already installed", 1); continue
-            case .blocked: throw SetupFailure("\(spec.name) is newer than this release's approved version. It was preserved; ask the staging administrator to approve it.")
-            case .install: break
-            }
-            let cached = cache.appendingPathComponent(spec.sha256 + ".pkg")
-            if fm.fileExists(atPath: cached.path), (try? PackageVerifier.verify(cached, spec: spec)) == nil {
-                try fm.removeItem(at: cached)
-            }
-            if !fm.fileExists(atPath: cached.path) {
-                let available = try cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage ?? 0
-                guard available >= spec.size * 3 + 2_000_000_000 else { throw SetupFailure("Free at least \((spec.size * 3 + 2_000_000_000) / 1_000_000_000 + 1) GB on this Mac before setup") }
-                if let offline {
-                    let architectureSpecific = try SafeFiles.child("Installers/\(spec.filename.replacingOccurrences(of: ".pkg", with: "-\(Hardware.architecture).pkg"))", in: offline)
-                    let universal = try SafeFiles.child("Installers/\(spec.filename)", in: offline)
-                    let input = fm.fileExists(atPath: architectureSpecific.path) ? architectureSpecific : universal
-                    try SafeFiles.copyVerified(from: input, to: cached, sha256: spec.sha256, maxBytes: spec.size)
-                } else {
-                    var attempt = 1
-                    while true {
-                        try Task.checkCancellation()
-                        let partial = cache.appendingPathComponent("\(UUID().uuidString).partial")
-                        defer { try? fm.removeItem(at: partial) }
-                        do {
-                            progress(spec.id, "Downloading \(spec.name) \(spec.version) (attempt \(attempt)/3)", 0)
-                            try await PackageDownload(spec: spec, destination: partial) { fraction in
-                                progress(spec.id, "Downloading \(spec.name) \(Int(fraction * 100))%", fraction)
-                            }.run()
-                            try Task.checkCancellation()
-                            try PackageVerifier.verify(partial, spec: spec)
-                            try fm.moveItem(at: partial, to: cached)
-                            break
-                        } catch {
-                            guard DownloadPolicy.shouldRetry(error, attempt: attempt) else { throw error }
-                            attempt += 1
-                            try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
-                        }
+            let output = destination.appendingPathComponent("Installers/\(spec.filename)")
+            let available = try cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage ?? 0
+            guard available >= 8_000_000_000 else { throw SetupFailure("Free at least 8 GB on this Mac before setup") }
+            let resolved: PackageSpec
+            if let offline {
+                let architectureSpecific = try SafeFiles.child("Installers/\(spec.filename.replacingOccurrences(of: ".pkg", with: "-\(Hardware.architecture).pkg"))", in: offline)
+                let universal = try SafeFiles.child("Installers/\(spec.filename)", in: offline)
+                let input = fm.fileExists(atPath: architectureSpecific.path) ? architectureSpecific : universal
+                try SafeFiles.copyVerified(from: input, to: output, sha256: spec.sha256, maxBytes: spec.size)
+                try PackageVerifier.verify(output, spec: spec)
+                resolved = spec
+            } else {
+                var attempt = 1
+                while true {
+                    try Task.checkCancellation()
+                    do {
+                        progress(spec.id, "Checking latest \(spec.name): downloading signed installer (attempt \(attempt)/3)", 0)
+                        try await PackageDownload(spec: spec, destination: output, latest: true) { fraction in
+                            progress(spec.id, "Checking latest \(spec.name): \(Int(fraction * 100))%", fraction)
+                        }.run()
+                        break
+                    } catch {
+                        try? fm.removeItem(at: output)
+                        guard DownloadPolicy.shouldRetry(error, attempt: attempt) else { throw error }
+                        attempt += 1
+                        try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
                     }
                 }
+                resolved = try LatestPackage.resolve(output, trusted: spec)
             }
-            try PackageVerifier.verify(cached, spec: spec)
             try Task.checkCancellation()
-            try SafeFiles.copyVerified(from: cached, to: destination.appendingPathComponent("Installers/\(spec.filename)"), sha256: spec.sha256, maxBytes: spec.size)
-            progress(spec.id, "Verified \(spec.name) \(spec.version)", 1)
+            let installed = try PackageVerifier.installedVersion(resolved)
+            let decision = try PackagePolicy.decision(installed: installed, approved: resolved.version)
+            let scope = offline == nil ? "current vendor" : "offline approved"
+            progress(spec.id, decision == .skip
+                     ? "Installed \(installed ?? resolved.version) meets \(scope) version \(resolved.version); no upgrade needed"
+                     : "Verified \(scope) version \(resolved.version); ready to \(installed == nil ? "install" : "upgrade")", 1)
         }
         return prepared
     }

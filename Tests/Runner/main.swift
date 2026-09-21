@@ -20,6 +20,7 @@ func XCTAssertNoThrow<T>(_ value: @autoclosure () throws -> T, file: StaticStrin
 
 do {
     try SigningTests().testRunningIdentityRejectsAnotherExecutable()
+    try LatestPackageTests().testSignedMetadataSelectsEachAppAndRejectsAmbiguity()
     let policy = PolicyTests()
     try policy.testVersionPolicyNeverDowngrades()
     try policy.testRejectsUnsafeRelativePathsAndURLs()

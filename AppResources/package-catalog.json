@@ -34,8 +34,9 @@
         "arm64",
         "x86_64"
       ],
-      "url": "https://cdn.zoom.us/prod/7.2.0.88195/ZoomInstallerIT.pkg",
+      "url": "https://zoom.us/client/latest/ZoomInstallerIT.pkg",
       "allowedHosts": [
+        "zoom.us",
         "cdn.zoom.us"
       ],
       "sha256": "f4c4634dd85adae566d7ab7d2e8306fc45f0eb47ea83490c552226dfc705df40",

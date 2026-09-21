@@ -6,7 +6,7 @@ public struct SetupFailure: LocalizedError {
     public var errorDescription: String? { message }
 }
 
-public enum PackageDecision: Equatable { case install, skip, blocked }
+public enum PackageDecision: Equatable { case install, skip }
 
 public enum PackagePolicy {
     public static func decision(installed: String?, approved: String) throws -> PackageDecision {
@@ -17,7 +17,7 @@ public enum PackagePolicy {
             let lhs = i < current.count ? current[i] : 0
             let rhs = i < target.count ? target[i] : 0
             if lhs < rhs { return .install }
-            if lhs > rhs { return .blocked }
+            if lhs > rhs { return .skip }
         }
         return .skip
     }

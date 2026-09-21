@@ -57,6 +57,10 @@ public enum PackageVerifier {
         guard try SafeFiles.hash(url, maxBytes: spec.size) == spec.sha256 else {
             throw SetupFailure("\(spec.name) checksum does not match this setup release. Download a newer setup app or supply the approved package.")
         }
+        try verifySignature(url, spec: spec)
+    }
+
+    public static func verifySignature(_ url: URL, spec: PackageSpec) throws {
         let (status, output) = try Command.run("/usr/sbin/pkgutil", ["--check-signature", url.path])
         guard status == 0, output.contains("Status: signed by a developer certificate issued by Apple for distribution"),
               output.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "1. \(spec.installerIdentity)" }) else {

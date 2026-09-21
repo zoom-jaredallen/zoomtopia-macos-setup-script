@@ -65,16 +65,15 @@ public enum PayloadStager {
         try manifest.copy(from: resources.appendingPathComponent("Payload"), to: destination)
         let installers = destination.appendingPathComponent("Installers")
         try FileManager.default.createDirectory(at: installers, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        var resolved: [PackageSpec] = []
         for spec in catalog.packages {
-            switch try PackageVerifier.decision(spec) {
-            case .skip: continue
-            case .blocked: throw SetupFailure("\(spec.name) is newer than the approved version. Existing installation preserved; ask the staging administrator to approve it.")
-            case .install:
-                let input = try SafeFiles.child("Installers/\(spec.filename)", in: source)
-                let output = installers.appendingPathComponent(spec.filename)
-                try SafeFiles.copyVerified(from: input, to: output, sha256: spec.sha256, maxBytes: spec.size)
-                try PackageVerifier.verify(output, spec: spec)
-            }
+            let input = try SafeFiles.child("Installers/\(spec.filename)", in: source)
+            let output = installers.appendingPathComponent(spec.filename)
+            // Hash while copying, then authenticate the private copy. Never trust a user-supplied catalog.
+            try SafeFiles.copyVerified(from: input, to: output, sha256: SafeFiles.hash(input), maxBytes: 1_999_999_999)
+            resolved.append(try LatestPackage.resolve(output, trusted: spec))
         }
+        try JSONEncoder().encode(PackageCatalog(schemaVersion: 1, packages: resolved))
+            .write(to: destination.appendingPathComponent("package-catalog.json"), options: .atomic)
     }
 }
