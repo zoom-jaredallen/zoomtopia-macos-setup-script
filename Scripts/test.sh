@@ -7,3 +7,6 @@ swiftc -D STANDALONE_TESTS Sources/SetupCore/*.swift Tests/SetupCoreTests/*.swif
 /bin/bash Tests/bootstrap-test.sh
 /bin/bash Tests/update-policy-test.sh
 /bin/bash Tests/signing-swap-test.sh
+
+swiftc -parse-as-library Sources/SetupCore/*.swift Sources/ZoomtopiaSetupApp/Wallpaper.swift Tests/WallpaperTests.swift -o .build/tests/wallpaper-tests
+.build/tests/wallpaper-tests

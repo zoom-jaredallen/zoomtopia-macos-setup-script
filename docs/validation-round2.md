@@ -22,7 +22,13 @@
 
 - Zoom 7.2.0.88195 exposes Settings, Video & effects, Audio, Test microphone and Test speaker while signed out on this Mac. Navigation was inspected without signing in or marking permissions granted. No fresh-permission prompt or microphone/speaker functional outcome is claimed.
 - Full and limited preflight views display the distinct effects correctly. Cancel dismisses without starting provisioning.
-- Limited live run reached macOS administrator authorization; further live results are pending below.
+- Authorized limited run completed: both current applications skipped; configuration, wallpaper, shortcuts and OS checks excluded. Modification times of four configuration/wallpaper/shortcut paths matched the recorded pre-run values. Permission assistant opened and explicitly disabled lab readiness.
+- Authorized full run completed: Chrome/Zoom skipped as current; preferences and shortcuts passed; OS checking returned actionRequired without any installation/download invocation.
+- Native wallpaper initially set successfully but readback was stale; targeted retry passed. Fixed by applying all displays once and asynchronously checking readback for at most three seconds. New tests cover delayed success, bounded failure and cancellation. Patched retry passed on the Mac; the controlled delayed-readback test covers the timing condition.
+- Software Update handoff opened the correct macOS page. It showed Restart Now for Tahoe 26.7 under Other Updates, separate from macOS 27 Upgrade Now. Neither install/restart control was clicked.
+- Permission assistant remained accessible despite pending updates; Mark Mac Ready stayed disabled. No operator confirmations were fabricated.
+- Reopening the rebuilt app restored the summary with an explicit revalidation requirement. Wallpaper retry worked independently; the update recheck showed a read-only progress state.
+- Targeted independent review found no remaining lifecycle/readiness issue in the asynchronous wallpaper fix.
 
 ## Remaining release qualifications
 

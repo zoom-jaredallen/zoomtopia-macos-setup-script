@@ -42,6 +42,7 @@ final class SetupController: ObservableObject {
     @Published var pendingMode: SetupMode = .full
     @Published var showingPreflight = false
     @Published var isCheckingUpdates = false
+    @Published var isApplyingWallpaper = false
     @Published var needsRevalidation = false
     @Published var restartBoot: String? = UserDefaults.standard.string(forKey: "restartBoot")
     private let currentBoot: String = {
@@ -54,7 +55,7 @@ final class SetupController: ObservableObject {
         let mode: SetupMode
         let steps: [SetupStep]
     }
-    private var busy: Bool { isRunning || isCheckingUpdates }
+    private var busy: Bool { isRunning || isCheckingUpdates || isApplyingWallpaper }
     @Published var isRunning = false
     @Published var isPreparing = false
     @Published var preparationDetail = ""
@@ -221,7 +222,7 @@ final class SetupController: ObservableObject {
                 provisioningExitCode = result.exitCode
                 isComplete = true
                 if mode == .full, result.exitCode == 0 {
-                    if steps.first(where: { $0.id == "wallpaper" })?.state == .actionRequired { retryWallpaper() }
+                    if steps.first(where: { $0.id == "wallpaper" })?.state == .actionRequired { await applyWallpaper() }
                     enforceRestartCheckpoint()
                     reconcileVerification()
                 }
@@ -359,10 +360,18 @@ final class SetupController: ObservableObject {
     }
 
     func retryWallpaper() {
-        guard mode == .full, !isCheckingUpdates, let resources = Bundle.main.resourceURL else { return }
+        guard !busy, mode == .full else { return }
+        isApplyingWallpaper = true
+        Task { await applyWallpaper() }
+    }
+
+    private func applyWallpaper() async {
+        defer { isApplyingWallpaper = false }
+        guard mode == .full, let resources = Bundle.main.resourceURL else { return }
+        isApplyingWallpaper = true
         setStep("wallpaper", .running, "Applying wallpaper to connected displays")
         do {
-            try Wallpaper.apply(resources: resources)
+            try await Wallpaper.apply(resources: resources)
             setStep("wallpaper", .passed, "Wallpaper applied and verified on connected displays")
         } catch { setStep("wallpaper", .warning, error.localizedDescription) }
         reconcileVerification(); saveSummary()
