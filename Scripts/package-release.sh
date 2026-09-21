@@ -2,6 +2,8 @@
 set -euo pipefail
 PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 APP_PATH="${1:-$PROJECT_ROOT/dist/Zoomtopia Setup.app}"
+configuration=$(/usr/bin/plutil -extract ZoomtopiaBuildConfiguration raw -o - "$APP_PATH/Contents/Info.plist")
+[[ "$configuration" == release ]] || { echo "Development builds cannot be packaged for release" >&2; exit 1; }
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 /usr/bin/xcrun stapler validate "$APP_PATH"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$APP_PATH"

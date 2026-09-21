@@ -81,6 +81,7 @@ final class SetupController: ObservableObject {
            Set(saved.steps.map(\.id)) == Set(Self.initialSteps.map(\.id)) {
             mode = saved.mode; steps = saved.steps; needsRevalidation = true; isComplete = true
         }
+        #if ZOOMTOPIA_DEVELOPMENT
         if ProcessInfo.processInfo.environment["ZOOMTOPIA_READY_PREVIEW"] == "1"
             || ProcessInfo.processInfo.arguments.contains("--ready-preview") {
             preview = true; needsRevalidation = false; restartBoot = nil; mode = .full
@@ -97,7 +98,10 @@ final class SetupController: ObservableObject {
             phase = .permissions
             isComplete = true
         }
+        #endif
     }
+
+    var isPreview: Bool { preview }
 
     var isBusy: Bool { busy }
     var canOpenPermissions: Bool {
@@ -159,10 +163,10 @@ final class SetupController: ObservableObject {
         FileManager.default.fileExists(atPath: Self.logPath)
     }
 
-    func requestStart() { guard !busy else { return }; pendingMode = mode; showingPreflight = true }
+    func requestStart() { guard !preview, !busy else { return }; pendingMode = mode; showingPreflight = true }
 
     func start() {
-        guard !busy else { return }
+        guard !preview, !busy else { return }
         showingPreflight = false
         mode = pendingMode
         needsRevalidation = false
@@ -360,7 +364,7 @@ final class SetupController: ObservableObject {
     }
 
     func retryWallpaper() {
-        guard !busy, mode == .full else { return }
+        guard !preview, !busy, mode == .full else { return }
         isApplyingWallpaper = true
         Task { await applyWallpaper() }
     }
@@ -383,7 +387,7 @@ final class SetupController: ObservableObject {
     }
 
     func recordRestartRequest() {
-        guard !busy, mode == .full else { return }
+        guard !preview, !busy, mode == .full else { return }
         restartBoot = currentBoot
         if !preview { UserDefaults.standard.set(currentBoot, forKey: "restartBoot") }
         setStep("updates", .actionRequired, "Operator confirmed macOS requests a restart. Save your work and restart in Software Update, then reopen setup and recheck.")
@@ -391,7 +395,7 @@ final class SetupController: ObservableObject {
     }
 
     func checkUpdates() {
-        guard !busy, (mode == .full || (showingPreflight && pendingMode == .full)), let helper = Bundle.main.resourceURL?.appendingPathComponent("PayloadVerifier") else { return }
+        guard !preview, !busy, (mode == .full || (showingPreflight && pendingMode == .full)), let helper = Bundle.main.resourceURL?.appendingPathComponent("PayloadVerifier") else { return }
         isCheckingUpdates = true
         setStep("updates", .running, "Checking current-major OS and recommended application updates")
         Task {

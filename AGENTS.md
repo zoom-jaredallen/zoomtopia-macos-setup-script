@@ -70,9 +70,12 @@ plutil -lint "dist/Zoomtopia Setup.app/Contents/Info.plist"
 Preview the permission assistant without installing software or changing system settings:
 
 ```bash
+BUILD_CONFIGURATION=development ./Scripts/build-app.sh
 open -n "dist/Zoomtopia Setup.app" --args --permission-preview
 open -n "dist/Zoomtopia Setup.app" --args --ready-preview
 ```
+
+Release builds ignore preview flags; rebuild with the default release configuration after preview testing. Developer ID builds require an explicit, incremented `APP_BUILD`.
 
 The completed build must contain `x86_64 arm64`, pass bundle/signature checks, render both the setup and permission views, and leave **Mark Mac Ready** disabled until all four operator checks are selected.
 

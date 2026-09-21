@@ -14,7 +14,7 @@ A native macOS provisioning app for approximately 220 short-lived Zoomtopia lab 
 6. Open the **Permission Assistant** once Zoom is verified, even when unrelated steps need attention. In Zoom's settings cog, use **Video & effects**, then **Audio → Test microphone / Test speaker**. Approve prompts yourself. Use the test-meeting fallback and test a screen share separately. Confirm all four checks.
 7. Use **Retry Wallpaper** and **Recheck Updates** for those individual steps. If macOS explicitly requests a restart, select **macOS requested a restart…**, save your work, and restart through Software Update. After reboot, reopen setup and run again to revalidate. **Mark Mac Ready** remains disabled until full provisioning and the four checks pass.
 
-**Limited application test** installs/checks Chrome and Zoom but excludes managed preferences, trackpad changes, wallpaper, Desktop icons, privacy-profile staging and OS checks. It still installs software and requests administrator authorization; it is not a dry run and cannot claim lab readiness. The built-in permission/ready previews remain non-destructive UI-only options.
+**Limited application test** installs/checks Chrome and Zoom but excludes managed preferences, trackpad changes, wallpaper, Desktop icons, privacy-profile staging and OS checks. It still installs software and requests administrator authorization; it is not a dry run and cannot claim lab readiness. Explicit development builds offer permission/ready UI previews; release builds ignore all preview flags and environment variables.
 
 A saved summary survives relaunch but is informational: restored results require a new run before readiness. Operator permission confirmations are not restored as verified facts. The explicit restart checkpoint survives relaunch; it clears only after a different boot and a successful update-policy check. There is no automatic relaunch or hidden login item.
 Privacy consent, optional profile approval, and some macOS updates can require further interaction. Passwords are handled by macOS authorization. The app does not inspect Zoom's private TCC state or bypass corporate application controls.
@@ -71,18 +71,21 @@ plutil -lint "dist/Zoomtopia Setup.app/Contents/Info.plist"
 
 The test script works with Command Line Tools and runs policy, file integrity, locking, download failure/cancellation, readiness, signed-executable replacement, update-restart persistence and shell regression tests. The Swift tests also support `swift test` when full Xcode supplies XCTest. CI runs non-destructive checks and builds both architecture slices.
 
-Development builds are ad-hoc signed. Distribution signing:
+Builds default to release configuration and use ad-hoc signing unless a Developer ID is supplied. Distribution signing requires an explicit build number:
 
 ```bash
-DEVELOPER_ID_APPLICATION="Developer ID Application: Your Company (TEAMID)" \
+APP_BUILD=2 DEVELOPER_ID_APPLICATION="Developer ID Application: Your Company (TEAMID)" \
   ./Scripts/build-app.sh
 ```
 
 The verifier and app are signed separately with hardened runtime. Build output contains the app only; no vendor packages are bundled. `APP_VERSION` overrides the default version, currently `1.2.0`.
 
-Non-destructive UI previews:
+`APP_BUILD` sets `CFBundleVersion` (integer 1–9999; defaults to 1 only for unsigned/ad-hoc builds). Increment it for each distributed build, including rebuilds of the same `APP_VERSION`. Developer ID signing rejects development configuration and a missing build number.
+
+UI previews require an explicit development build, display a persistent preview banner, and block provisioning, wallpaper changes, update checks and restart-state writes. Rebuild in release configuration before distribution:
 
 ```bash
+BUILD_CONFIGURATION=development ./Scripts/build-app.sh
 open -n "dist/Zoomtopia Setup.app" --args --permission-preview
 open -n "dist/Zoomtopia Setup.app" --args --ready-preview
 ```
@@ -96,7 +99,9 @@ xcrun notarytool store-credentials "zoomtopia-notary"
 NOTARY_PROFILE="zoomtopia-notary" ./Scripts/notarize-app.sh
 ```
 
-The notarization script submits the signed app, staples it, checks Gatekeeper, then invokes `Scripts/package-release.sh`. The final **Zoomtopia-Setup.zip is rebuilt after stapling** and accompanied by `SHA256SUMS`. Packaging refuses an unstapled/rejected app and verifies both architecture slices and bundled resources. The submission ZIP is not the release download.
+The notarization script submits the signed app, staples it, checks Gatekeeper, then invokes `Scripts/package-release.sh`. The final **Zoomtopia-Setup.zip is rebuilt after stapling** and accompanied by `SHA256SUMS`. Packaging refuses an unstapled/rejected app and verifies both architecture slices and bundled resources. The submission ZIP is not the release download. Both notarization and packaging reject development builds.
+
+Each notarization attempt retains its submitted ZIP, SHA-256, Info.plist, signature details, raw response, submission ID and Apple log under `dist/notarization/submission.*`. Archive that folder with your private release records. Rejected submissions also retain diagnostics; missing IDs or unavailable logs stop the workflow before stapling. Inspect these records before resubmitting. To retry log retrieval, use `xcrun notarytool log SUBMISSION_ID --keychain-profile zoomtopia-notary OUTPUT.json`. Credentials remain in Keychain.
 
 After staging acceptance, create a versioned GitHub Release and upload `dist/Zoomtopia-Setup.zip` and `dist/SHA256SUMS`. Release notes must name tested package versions, macOS versions, publisher, and any restart requirements. Keep the event download link pinned to that release for consistent staging.
 

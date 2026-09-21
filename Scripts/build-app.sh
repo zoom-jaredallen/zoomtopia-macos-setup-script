@@ -8,16 +8,31 @@ cd "$PROJECT_ROOT"
 APP_DIR="$PROJECT_ROOT/dist/Zoomtopia Setup.app"
 CONTENTS="$APP_DIR/Contents"
 APP_VERSION="${APP_VERSION:-1.2.0}"
+BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-release}"
+APP_BUILD="${APP_BUILD:-}"
+case "$BUILD_CONFIGURATION" in
+    release|development) ;;
+    *) echo "BUILD_CONFIGURATION must be release or development" >&2; exit 64 ;;
+esac
+if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
+    [[ "$BUILD_CONFIGURATION" == release ]] || { echo "Developer ID builds must use release configuration" >&2; exit 64; }
+    [[ -n "$APP_BUILD" ]] || { echo "Set APP_BUILD to a new build number before distribution signing" >&2; exit 64; }
+fi
+APP_BUILD="${APP_BUILD:-1}"
+[[ "$APP_BUILD" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "APP_BUILD must be an integer from 1 to 9999" >&2; exit 64; }
+# Always pass a define so Bash 3.2 nounset never expands an empty array.
+SWIFT_FLAGS=(-D ZOOMTOPIA_RELEASE)
+[[ "$BUILD_CONFIGURATION" != development ]] || SWIFT_FLAGS=(-D ZOOMTOPIA_DEVELOPMENT)
 BUILD_DIR=$(mktemp -d)
 trap '/bin/rm -rf "$BUILD_DIR"' EXIT
 
 echo "Compiling Apple Silicon binary..."
-/usr/bin/swiftc -O -target arm64-apple-macosx13.0 \
+/usr/bin/swiftc "${SWIFT_FLAGS[@]}" -O -target arm64-apple-macosx13.0 \
     "$PROJECT_ROOT"/Sources/SetupCore/*.swift "$PROJECT_ROOT"/Sources/ZoomtopiaSetupApp/*.swift \
     -o "$BUILD_DIR/ZoomtopiaSetup-arm64"
 
 echo "Compiling Intel binary..."
-/usr/bin/swiftc -O -target x86_64-apple-macosx13.0 \
+/usr/bin/swiftc "${SWIFT_FLAGS[@]}" -O -target x86_64-apple-macosx13.0 \
     "$PROJECT_ROOT"/Sources/SetupCore/*.swift "$PROJECT_ROOT"/Sources/ZoomtopiaSetupApp/*.swift \
     -o "$BUILD_DIR/ZoomtopiaSetup-x86_64"
 
@@ -27,7 +42,7 @@ echo "Compiling Intel binary..."
     -output "$BUILD_DIR/Zoomtopia Setup"
 
 for arch in arm64 x86_64; do
-    /usr/bin/swiftc -O -target "$arch-apple-macosx13.0" \
+    /usr/bin/swiftc "${SWIFT_FLAGS[@]}" -O -target "$arch-apple-macosx13.0" \
         "$PROJECT_ROOT"/Sources/SetupCore/*.swift "$PROJECT_ROOT"/Sources/PayloadVerifier/main.swift \
         -o "$BUILD_DIR/Verifier-$arch"
 done
@@ -63,7 +78,8 @@ fi
 /usr/bin/plutil -insert CFBundleInfoDictionaryVersion -string "6.0" "$CONTENTS/Info.plist"
 /usr/bin/plutil -insert CFBundlePackageType -string "APPL" "$CONTENTS/Info.plist"
 /usr/bin/plutil -insert CFBundleShortVersionString -string "$APP_VERSION" "$CONTENTS/Info.plist"
-/usr/bin/plutil -insert CFBundleVersion -string "1" "$CONTENTS/Info.plist"
+/usr/bin/plutil -insert CFBundleVersion -string "$APP_BUILD" "$CONTENTS/Info.plist"
+/usr/bin/plutil -insert ZoomtopiaBuildConfiguration -string "$BUILD_CONFIGURATION" "$CONTENTS/Info.plist"
 /usr/bin/plutil -insert LSMinimumSystemVersion -string "13.0" "$CONTENTS/Info.plist"
 /usr/bin/plutil -insert NSHighResolutionCapable -bool true "$CONTENTS/Info.plist"
 /usr/bin/plutil -insert NSPrincipalClass -string "NSApplication" "$CONTENTS/Info.plist"

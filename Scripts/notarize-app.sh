@@ -16,10 +16,20 @@ if [[ -z "$NOTARY_PROFILE" ]]; then
     exit 1
 fi
 
-ZIP_PATH="$PROJECT_ROOT/dist/Zoomtopia-Setup-notarization.zip"
-/bin/rm -f "$ZIP_PATH"
+configuration=$(/usr/bin/plutil -extract ZoomtopiaBuildConfiguration raw -o - "$APP_PATH/Contents/Info.plist")
+[[ "$configuration" == release ]] || { echo "Rebuild with BUILD_CONFIGURATION=release before notarization" >&2; exit 1; }
+/usr/bin/codesign --verify --deep --strict "$APP_PATH"
+/bin/mkdir -p "$PROJECT_ROOT/dist/notarization"
+RECORDS=$(/usr/bin/mktemp -d "$PROJECT_ROOT/dist/notarization/submission.XXXXXX")
+/usr/bin/ditto "$APP_PATH/Contents/Info.plist" "$RECORDS/Info.plist"
+/usr/bin/codesign -d --verbose=4 "$APP_PATH" > "$RECORDS/signature.txt" 2>&1
+ZIP_PATH="$RECORDS/Zoomtopia-Setup-notarization.zip"
 /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
-/usr/bin/xcrun notarytool submit "$ZIP_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+/usr/bin/shasum -a 256 "$ZIP_PATH" > "$RECORDS/SHA256SUMS"
+notary_command() { /usr/bin/xcrun notarytool "$@"; }
+source "$PROJECT_ROOT/Scripts/notary-submit.sh"
+echo "Notarization attempt records: $RECORDS"
+submit_for_notarization "$ZIP_PATH" "$NOTARY_PROFILE" "$RECORDS"
 /usr/bin/xcrun stapler staple "$APP_PATH"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$APP_PATH"

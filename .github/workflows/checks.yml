@@ -12,10 +12,12 @@ jobs:
           bash -n Scripts/*.sh Tests/bootstrap-test.sh
           ./Scripts/test.sh
       - name: Build universal app
-        run: ./Scripts/build-app.sh
+        run: APP_BUILD=42 ./Scripts/build-app.sh
       - name: Verify bundle
         run: |
           lipo "dist/Zoomtopia Setup.app/Contents/MacOS/Zoomtopia Setup" -verify_arch x86_64 arm64
           lipo "dist/Zoomtopia Setup.app/Contents/Resources/PayloadVerifier" -verify_arch x86_64 arm64
           codesign --verify --deep --strict "dist/Zoomtopia Setup.app"
           plutil -lint "dist/Zoomtopia Setup.app/Contents/Info.plist"
+          test "$(plutil -extract CFBundleVersion raw -o - 'dist/Zoomtopia Setup.app/Contents/Info.plist')" = 42
+          test "$(plutil -extract ZoomtopiaBuildConfiguration raw -o - 'dist/Zoomtopia Setup.app/Contents/Info.plist')" = release

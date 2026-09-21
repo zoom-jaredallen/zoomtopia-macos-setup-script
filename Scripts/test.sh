@@ -10,3 +10,12 @@ swiftc -D STANDALONE_TESTS Sources/SetupCore/*.swift Tests/SetupCoreTests/*.swif
 
 swiftc -parse-as-library Sources/SetupCore/*.swift Sources/ZoomtopiaSetupApp/Wallpaper.swift Tests/WallpaperTests.swift -o .build/tests/wallpaper-tests
 .build/tests/wallpaper-tests
+
+/bin/bash Tests/notarization-test.sh
+for configuration in RELEASE DEVELOPMENT; do
+    swiftc -parse-as-library -D "ZOOMTOPIA_$configuration" Sources/SetupCore/*.swift Sources/ZoomtopiaSetupApp/SetupController.swift Sources/ZoomtopiaSetupApp/Wallpaper.swift Tests/PreviewTests.swift -o ".build/tests/preview-$configuration"
+    env -u ZOOMTOPIA_READY_PREVIEW -u ZOOMTOPIA_PERMISSION_PREVIEW ".build/tests/preview-$configuration" --ready-preview
+    env -u ZOOMTOPIA_READY_PREVIEW -u ZOOMTOPIA_PERMISSION_PREVIEW ".build/tests/preview-$configuration" --permission-preview
+    ZOOMTOPIA_READY_PREVIEW=1 ".build/tests/preview-$configuration"
+    env -u ZOOMTOPIA_READY_PREVIEW ZOOMTOPIA_PERMISSION_PREVIEW=1 ".build/tests/preview-$configuration"
+done

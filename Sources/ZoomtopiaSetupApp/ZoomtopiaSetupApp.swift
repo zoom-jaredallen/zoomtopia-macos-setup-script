@@ -18,6 +18,12 @@ struct ContentView: View {
                 readyView
             }
         }
+        .safeAreaInset(edge: .top) {
+            if controller.isPreview {
+                Text("DEVELOPMENT PREVIEW — no provisioning performed")
+                    .font(.headline).padding(10).frame(maxWidth: .infinity).background(Color.orange).foregroundStyle(.black)
+            }
+        }
         .background(ZoomtopiaTheme.canvas)
         .foregroundStyle(ZoomtopiaTheme.primaryText)
         .tint(ZoomtopiaTheme.actionBlue)
@@ -65,10 +71,10 @@ struct ContentView: View {
     private var footer: some View {
         HStack(spacing: 12) {
             Button("Offline Payload…") { controller.chooseOfflinePayload() }
-                .disabled(controller.isBusy)
+                .disabled(controller.isBusy || controller.isPreview)
             if controller.offlinePayloadURL != nil {
                 Button("Use Online Downloads") { controller.offlinePayloadURL = nil }
-                    .disabled(controller.isBusy)
+                    .disabled(controller.isBusy || controller.isPreview)
             }
             if controller.isPreparing {
                 Button("Cancel Download") { controller.cancelPreparation() }
@@ -86,7 +92,7 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
             .tint(ZoomtopiaTheme.actionBlue)
             .controlSize(.large)
-            .disabled(controller.isBusy)
+            .disabled(controller.isBusy || controller.isPreview)
         }
         .padding(20)
         .background(ZoomtopiaTheme.footer)
@@ -104,7 +110,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             if controller.pendingMode == .full {
                 Button("Check update availability") { controller.checkUpdates() }
-                    .disabled(controller.isBusy)
+                    .disabled(controller.isBusy || controller.isPreview)
                 if let update = controller.steps.first(where: { $0.id == "updates" }), !update.detail.isEmpty {
                     Text(update.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
                 }
@@ -113,7 +119,7 @@ struct ContentView: View {
                 Button("Cancel") { controller.showingPreflight = false }
                 Spacer()
                 Button("Begin reviewed setup") { controller.start() }
-                    .buttonStyle(.borderedProminent).disabled(controller.isBusy)
+                    .buttonStyle(.borderedProminent).disabled(controller.isBusy || controller.isPreview)
             }
         }.padding(28).frame(width: 590)
     }
@@ -139,7 +145,7 @@ struct ContentView: View {
                 }
             }
         }
-        .disabled(controller.isBusy)
+        .disabled(controller.isBusy || controller.isPreview)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16).background(ZoomtopiaTheme.raisedSurface, in: RoundedRectangle(cornerRadius: 12))
     }
@@ -340,7 +346,7 @@ private struct PermissionAssistantView: View {
                 Button("Restart Zoom") {
                     NSRunningApplication.runningApplications(withBundleIdentifier: "us.zoom.xos").forEach { $0.terminate() }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { controller.launchZoom() }
-                }
+                }.disabled(controller.isPreview)
             }
             .padding(.leading, 44)
         }
