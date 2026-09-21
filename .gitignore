@@ -1,0 +1,7 @@
+.build/
+dist/
+.DS_Store
+*.xcarchive
+*.zip
+ZoomtopiaPayload/Installers/*.pkg
+ZoomtopiaPayload/checksums.txt
