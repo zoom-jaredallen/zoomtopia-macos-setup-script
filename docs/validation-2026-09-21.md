@@ -32,3 +32,15 @@ These gaps are release prerequisites, not permission to disable signature checks
 - Final universal app and verifier build passed; both contain x86_64 and arm64. Strict bundle/signature, plist and resource checks passed.
 - Independent review identified abandoned-download cleanup removal; restored recognized stale artifact cleanup under the run lock before the final build.
 - No root provisioning or fresh UI inspection was performed for this follow-up. The native workflow and four-check readiness gate remain unchanged. Signing/notarization will be performed on the user's other machine after staging acceptance.
+
+## Authorized live test on the development Mac
+
+The user explicitly authorized launching and testing setup on this computer.
+
+- Started the updated app through its native UI and completed administrator authorization.
+- Chrome 153.0.8010.52 upgraded to 153.0.8010.53. The actual installer reported success and the app's identity/version/architecture verification passed; setup continued automatically.
+- Zoom installed at 7.2.0.88195, passed verification, and launched to its normal login screen.
+- Fresh verifier decisions returned `skip` for both installed apps.
+- Zoom configuration, trackpad settings and Desktop icons completed successfully.
+- Wallpaper installation succeeded, but application failed with Apple Events error -1743: not authorized to control System Events. This is an unresolved live-test finding; the warning correctly prevents readiness.
+- Apple Software Update started downloading macOS Tahoe 26.7. Update completion/restart and the real Zoom privacy/audio checks are still pending. No reboot was requested by the agent.
