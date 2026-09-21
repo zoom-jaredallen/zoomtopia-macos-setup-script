@@ -41,7 +41,7 @@ if env DEVELOPER_ID_APPLICATION=test APP_BUILD=2 BUILD_CONFIGURATION=development
 mkdir -p "$scratch/Development.app/Contents"
 printf '%s\n' '{"ZoomtopiaBuildConfiguration":"development"}' > "$scratch/Development.app/Contents/Info.plist"
 if NOTARY_PROFILE=test-profile /bin/bash Scripts/notarize-app.sh "$scratch/Development.app" > "$scratch/refusal" 2>&1; then exit 1; fi
-rg -q 'Rebuild with BUILD_CONFIGURATION=release' "$scratch/refusal"
+grep -q 'Rebuild with BUILD_CONFIGURATION=release' "$scratch/refusal"
 if /bin/bash Scripts/package-release.sh "$scratch/Development.app" > "$scratch/refusal" 2>&1; then exit 1; fi
-rg -q 'Development builds cannot be packaged' "$scratch/refusal"
+grep -q 'Development builds cannot be packaged' "$scratch/refusal"
 echo 'Notarization retention and build-policy tests passed' 
