@@ -25,7 +25,7 @@ func event(_ path: String, id: String, state: String, detail: String) {
     let object: [String: Any] = ["id": id, "title": id == "payload" ? "Verify prepared payload" : id == "validate" ? "Validate Mac" : "Final verification", "state": state, "detail": detail, "index": index, "total": 11]
     if var data = try? JSONSerialization.data(withJSONObject: object) { data.append(10); try? appendStatus(path, data: data) }
 }
-func runSetup(source: URL, status: String) throws -> Int32 {
+func runSetup(source: URL, status: String, mode: SetupMode) throws -> Int32 {
     guard geteuid() == 0 else { throw SetupFailure("Installation requires administrator authorization") }
     let lock = try RunLock(url: URL(fileURLWithPath: "/var/run/com.zoom.zoomtopiasetup.lock"))
     defer { withExtendedLifetime(lock) {} }
@@ -48,7 +48,7 @@ func runSetup(source: URL, status: String) throws -> Int32 {
     event(status, id: "payload", state: "running", detail: "Copying and verifying approved files in private storage")
     try PayloadStager.stage(resources: resources, source: source, destination: stage)
     event(status, id: "payload", state: "passed", detail: "Approved resources and vendor packages verified")
-    return try Command.run("/bin/bash", [resources.appendingPathComponent("bootstrap.sh").path, "--payload", stage.path, "--status", status, "--resources", resources.path]).0
+    return try Command.run("/bin/bash", [resources.appendingPathComponent("bootstrap.sh").path, "--payload", stage.path, "--status", status, "--resources", resources.path, "--mode", mode.rawValue]).0
 }
 
 do {
@@ -73,6 +73,22 @@ do {
         let catalog = try PackageCatalog.load(catalogURL)
         guard let spec = catalog.packages.first(where: { $0.id == args[1] }) else { throw SetupFailure("Unknown package") }
         try PackageVerifier.verify(URL(fileURLWithPath: args[2]), spec: spec)
+    case "--check-updates":
+        let script = """
+        source "$1"
+        emit() { printf '\nZOOMTOPIA_UPDATE_RESULT|%s|%s\n' "$4" "$5"; }
+        warn_step() { emit "$1" "$2" "$3" warning "$4"; }
+        fail_step() { emit "$1" "$2" "$3" failed "$4"; }
+        install_macos_updates /var/db/com.zoom.zoomtopiasetup
+        """
+        let (code, output) = try Command.run("/bin/bash", ["-c", script, "_", resources.appendingPathComponent("update-policy.sh").path])
+        guard code == 0, let line = output.components(separatedBy: "\n").last(where: { $0.hasPrefix("ZOOMTOPIA_UPDATE_RESULT|") }) else {
+            throw SetupFailure("Unable to check Apple Software Update. Try again or open Software Update.")
+        }
+        let fields = line.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false)
+        guard fields.count == 3 else { throw SetupFailure("Invalid update check result") }
+        let data = try JSONSerialization.data(withJSONObject: ["state": String(fields[1]), "detail": String(fields[2])])
+        print(String(decoding: data, as: UTF8.self))
     case "--validate-resources":
         _ = try PackageCatalog.load(catalogURL)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -80,15 +96,15 @@ do {
         try ResourceManifest.load(resources).copy(from: resources.appendingPathComponent("Payload"), to: target)
         print("Catalog and bundled resources verified")
     case "--run":
-        guard args.count == 3 else { throw SetupFailure("Expected prepared payload and status file") }
-        exit(try runSetup(source: URL(fileURLWithPath: args[1]), status: args[2]))
+        guard args.count == 4, let mode = SetupMode(rawValue: args[3]) else { throw SetupFailure("Expected prepared payload and status file") }
+        exit(try runSetup(source: URL(fileURLWithPath: args[1]), status: args[2], mode: mode))
     default: throw SetupFailure("Unknown verifier operation")
     }
 } catch {
     let message = error.localizedDescription
     fputs(message + "\n", stderr)
-    if args.first == "--run", args.count == 3 {
-        for id in ids { event(args[2], id: id, state: id == "verify" ? "failed" : "skipped", detail: message) }
+    if args.first == "--run", args.count >= 3 {
+        for id in ids { event(args[2], id: id, state: id == "verify" ? "failed" : "notRun", detail: message) }
         if geteuid() == 0 {
             let fd = open("/var/log/zoomtopia-setup.log", O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0o644)
             if fd >= 0 {

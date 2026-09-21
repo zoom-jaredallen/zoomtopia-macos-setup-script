@@ -9,10 +9,14 @@ A native macOS provisioning app for approximately 220 short-lived Zoomtopia lab 
 1. Log into the account students will use, connect AC power, and join the approved network.
 2. Visit the staging lead's short link or the [release page](https://github.com/zoom-jaredallen/zoomtopia-macos-setup-script/releases). Download the approved release's **Zoomtopia-Setup.zip**, not GitHub's source-code ZIP.
 3. Expand the ZIP and open **Zoomtopia Setup.app**. Confirm the normal macOS first-launch dialog.
-4. Click **Start Setup**. The app downloads the current vendor installers, verifies their signatures, and compares their signed versions with installed Chrome and Zoom before requesting administrator credentials. Current or newer installations continue automatically; older versions are upgraded.
-5. Authorize setup in the macOS dialog. The app installs/configures software, trackpad preferences, wallpaper and Desktop shortcuts, and processes macOS updates.
-6. Resolve any warnings, including required restarts, and rerun. Once automated checks pass, confirm Camera, Microphone, Screen & System Audio Recording, and speaker testing. **Mark Mac Ready** requires all four confirmations.
+4. Click **Start Setup**, review **Full lab setup** or **Limited application test**, then choose **Begin reviewed setup**. Online preparation downloads both current vendor installers and verifies signatures before requesting administrator credentials.
+5. Full setup installs/configures the applications, trackpad, wallpaper and Desktop shortcuts. OS checking is read-only: **Authorize Update / Restart…** opens Apple's Software Update interface for credentials, installation and restart. Choose current-major OS and recommended app updates; next-major upgrades are excluded from readiness policy. The app never installs or reboots the OS in the background.
+6. Open the **Permission Assistant** once Zoom is verified, even when unrelated steps need attention. In Zoom's settings cog, use **Video & effects**, then **Audio → Test microphone / Test speaker**. Approve prompts yourself. Use the test-meeting fallback and test a screen share separately. Confirm all four checks.
+7. Use **Retry Wallpaper** and **Recheck Updates** for those individual steps. If macOS explicitly requests a restart, select **macOS requested a restart…**, save your work, and restart through Software Update. After reboot, reopen setup and run again to revalidate. **Mark Mac Ready** remains disabled until full provisioning and the four checks pass.
 
+**Limited application test** installs/checks Chrome and Zoom but excludes managed preferences, trackpad changes, wallpaper, Desktop icons, privacy-profile staging and OS checks. It still installs software and requests administrator authorization; it is not a dry run and cannot claim lab readiness. The built-in permission/ready previews remain non-destructive UI-only options.
+
+A saved summary survives relaunch but is informational: restored results require a new run before readiness. Operator permission confirmations are not restored as verified facts. The explicit restart checkpoint survives relaunch; it clears only after a different boot and a successful update-policy check. There is no automatic relaunch or hidden login item.
 Privacy consent, optional profile approval, and some macOS updates can require further interaction. Passwords are handled by macOS authorization. The app does not inspect Zoom's private TCC state or bypass corporate application controls.
 
 ## Online and offline inputs
@@ -74,7 +78,7 @@ DEVELOPER_ID_APPLICATION="Developer ID Application: Your Company (TEAMID)" \
   ./Scripts/build-app.sh
 ```
 
-The verifier and app are signed separately with hardened runtime. Build output contains the app only; no vendor packages are bundled. `APP_VERSION` overrides the default version, currently `1.1.0`.
+The verifier and app are signed separately with hardened runtime. Build output contains the app only; no vendor packages are bundled. `APP_VERSION` overrides the default version, currently `1.2.0`.
 
 Non-destructive UI previews:
 
@@ -104,7 +108,7 @@ The operator downloads into a private run directory under `~/Library/Caches/com.
 
 Before privileged execution, the app reads its running-process identity from the Security framework, copies its complete bundle into private root-owned storage, and verifies the snapshot against that exact running CDHash. The helper copies only manifest-approved resources and both packages into a second private directory, verifies their vendor signatures and signed versions again, and creates a root-owned per-run catalog before Bash uses them. The user cannot supply a replacement vendor identity or application path. Another root-level lock prevents concurrent installations across users. Temporary privileged copies are removed after completion; a process killed forcibly may leave a private temporary directory for administrator cleanup.
 
-Bootstrap events are written to the operator-owned status file; persistent diagnostics go to `/var/log/zoomtopia-setup.log`. Successful installation hashes live under `/var/db/com.zoom.zoomtopiasetup`. Existing Desktop collisions are preserved. Warnings block final readiness until resolved and the run succeeds. For conservative restart handling, any software-update installation records the current boot session and requires a restart, even if that particular update might not strictly require one. A same-boot rerun cannot clear the requirement; a new boot and clean update check can.
+Bootstrap events are written to the operator-owned status file; persistent diagnostics go to `/var/log/zoomtopia-setup.log`. Successful installation hashes live under `/var/db/com.zoom.zoomtopiasetup`. Existing Desktop collisions are preserved. Warnings block final readiness until resolved and the run succeeds. Update checks never execute `softwareupdate --install`. Availability and authentication-required handoffs are distinct from an operator-confirmed restart request. Old `updates-boot` files from the initial implementation are ignored because they were written before authentication and cannot prove a pending restart. Native wallpaper application uses `NSWorkspace`, verifies the installed image against the signed resource manifest, and reads back each connected display's current desktop image URL. Additional Spaces and future display connections require staging validation.
 
 ## Staging acceptance still required
 

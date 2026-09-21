@@ -6,6 +6,7 @@ PAYLOAD_ROOT=""
 STATUS_FILE=""
 LOG_FILE="/var/log/zoomtopia-setup.log"
 RESOURCES=""
+MODE="full"
 TOTAL=11
 FAILURES=0
 WARNINGS=0
@@ -15,10 +16,13 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --payload) PAYLOAD_ROOT="$2"; shift 2 ;;
         --status) STATUS_FILE="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
         --resources) RESOURCES="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 64 ;;
     esac
 done
+
+[[ "$MODE" == full || "$MODE" == limited ]] || exit 64
 
 if [[ $EUID -ne 0 ]]; then
     echo "This setup must run as root." >&2
@@ -144,6 +148,7 @@ install_approved_package 3 chrome "Install Google Chrome" GoogleChrome.pkg
 install_approved_package 4 zoom "Install Zoom Workplace" ZoomWorkplace.pkg
 [[ -d "/Applications/Zoom Workplace.app" ]] && ZOOM_APP="/Applications/Zoom Workplace.app"
 
+if [[ "$MODE" == full ]]; then
 # 5. Zoom managed configuration
 emit 5 zoom-config "Configure Zoom Workplace" running "Applying managed preferences"
 ZOOM_CONFIG_NAME=$(config_raw zoomConfigurationFilename us.zoom.config.plist)
@@ -190,12 +195,7 @@ else
     if [[ -L "$WALLPAPER_TARGET" ]] || ! /bin/mkdir -p "/Library/Desktop Pictures" || ! /usr/bin/install -o root -g wheel -m 644 "$WALLPAPER_SOURCE" "$WALLPAPER_TARGET"; then
         fail_step 7 wallpaper "Set Zoomtopia wallpaper" "Could not install wallpaper"
     else
-        wallpaper_script="tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER_TARGET\""
-    if run_as_user "$CURRENT_USER" /usr/bin/osascript -e "$wallpaper_script"; then
-        emit 7 wallpaper "Set Zoomtopia wallpaper" passed "Applied to all desktops"
-    else
-        warn_step 7 wallpaper "Set Zoomtopia wallpaper" "Image installed, but macOS requires wallpaper approval"
-    fi
+        emit 7 wallpaper "Set Zoomtopia wallpaper" actionRequired "Image installed; the setup app will apply it to this user's displays"
     fi
 fi
 
@@ -253,10 +253,19 @@ else
 fi
 ACTION_REQUIRED=1
 
+else
+    emit 5 zoom-config "Configure Zoom Workplace" skipped "Excluded from limited test"
+    emit 6 trackpad "Configure trackpad" skipped "Excluded from limited test"
+    emit 7 wallpaper "Set Zoomtopia wallpaper" skipped "Excluded from limited test"
+    emit 8 aliases "Create desktop icons" skipped "Excluded from limited test"
+    emit 9 privacy "Stage Zoom privacy permissions" actionRequired "Optional guided Zoom tests; limited mode cannot mark this Mac ready"
+    ACTION_REQUIRED=1
+fi
+
 # 10. macOS updates
-emit 10 updates "Install macOS updates" running "Checking Apple Software Update"
-if ! is_true "$(config_raw installOSUpdates true)"; then
-    emit 10 updates "Install macOS updates" skipped "Disabled in configuration"
+emit 10 updates "Check macOS updates" running "Checking Apple Software Update"
+if [[ "$MODE" == limited ]] || ! is_true "$(config_raw installOSUpdates true)"; then
+    emit 10 updates "Check macOS updates" skipped "Excluded by run mode or configuration"
 else
     source "$RESOURCES/update-policy.sh"
     install_macos_updates /var/db/com.zoom.zoomtopiasetup
@@ -266,7 +275,7 @@ fi
 emit 11 verify "Final verification" running "Checking installed applications and configuration"
 verification_errors=0
 "$VERIFIER" --verify-apps || verification_errors=$((verification_errors + 1))
-[[ -f "$WALLPAPER_TARGET" ]] || verification_errors=$((verification_errors + 1))
+if [[ "$MODE" == full && ! -f "${WALLPAPER_TARGET:-}" ]]; then verification_errors=$((verification_errors + 1)); fi
 if [[ $verification_errors -gt 0 || $FAILURES -gt 0 ]]; then
     fail_step 11 verify "Final verification" "$FAILURES setup step(s) failed; $verification_errors required item(s) missing"
 elif [[ $WARNINGS -gt 0 ]]; then

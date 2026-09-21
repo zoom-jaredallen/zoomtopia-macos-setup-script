@@ -7,7 +7,7 @@ cd "$PROJECT_ROOT"
 
 APP_DIR="$PROJECT_ROOT/dist/Zoomtopia Setup.app"
 CONTENTS="$APP_DIR/Contents"
-APP_VERSION="${APP_VERSION:-1.1.0}"
+APP_VERSION="${APP_VERSION:-1.2.0}"
 BUILD_DIR=$(mktemp -d)
 trap '/bin/rm -rf "$BUILD_DIR"' EXIT
 
